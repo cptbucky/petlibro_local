@@ -20,6 +20,21 @@ The firmware also refuses to actuate unless the plate has homed
 (`zeroState == SUCCESS`). It accepts the command and does nothing, which
 presents to the user as an unexplained timeout - hence the explicit warning
 and the zeroState diagnostic.
+
+Plan ownership, established by testing against a device:
+
+* An unreferenced planId is rejected with code 2050. A feed cannot be
+  fabricated, because the command carries no plate and the device resolves one
+  from the stored plan.
+* Plans are push-only and replace the list wholesale. There is no plan-fetch
+  command for this model - GET_FEEDING_PLAN_EVENT never appears.
+* Locally-issued planIds ARE accepted (code 0), so plans need not come from the
+  vendor cloud.
+* The ack echoes the planIds now stored, which is the only read-back available:
+  it confirms which plans exist, though not their plate or duration.
+
+Together these mean the integration must own the plan list outright. It cannot
+merge with, or borrow from, plans created by the vendor cloud.
 """
 
 from __future__ import annotations
