@@ -135,6 +135,25 @@ class PetlibroDevice:
         """Request full attribute snapshot from device."""
         await self._publish(self.topics.service_sub, build_attr_get())
 
+    def set_product_id(self, product_id: str) -> None:
+        """Adopt a model learned after construction.
+
+        Only the MQTT-discovery config path knows the model up front; the
+        sniffer and manual paths default it. Rebinding topics alone is not
+        enough - the profile decides which commands are understood and which
+        entities exist, so it has to be recomposed too.
+        """
+        if not product_id or product_id == self.product_id:
+            return
+        self.product_id = product_id
+        self.topics.set_product_id(product_id)
+        self.profile = get_profile(product_id)
+        self._handlers = {**self._SHARED_HANDLERS, **self.profile.handlers()}
+        _LOGGER.info(
+            "Device %s is a %s; using the %s profile",
+            self.serial, product_id, type(self.profile).__name__,
+        )
+
     def supports(self, capability: str) -> bool:
         """Whether this model exposes a capability (see const.CAP_*)."""
         return capability in self.profile.CAPABILITIES
@@ -151,8 +170,8 @@ class PetlibroDevice:
         if dispense is None:
             _LOGGER.error(
                 "Device %s is a %s: it feeds by serving a plate, not by "
-                "quantity. Use the Serve Plate buttons or the serve_plate "
-                "service instead of manual_feed.",
+                "quantity. Use the Serve Plate buttons on the device page "
+                "instead of manual_feed.",
                 self.serial,
                 self.profile.MODEL_NAME,
             )
@@ -198,9 +217,14 @@ class PetlibroDevice:
         await self._publish(self.topics.system_sub, build_restore())
 
     async def set_feeding_plans(self, plans: list[dict]) -> None:
-        """Set feeding plans on the device."""
-        from .protocol.codec import build_feeding_plan
-        await self._publish(self.topics.service_sub, build_feeding_plan(plans))
+        """Set feeding plans on the device.
+
+        The plan command is model-specific: an auger feeder uses
+        FEEDING_PLAN_SERVICE, a plate feeder WET_GRAIN_FEEDING_PLAN_SERVICE.
+        Sending the wrong one is silently dropped by the firmware, so the
+        plans would never reach the device.
+        """
+        await self._publish(self.topics.service_sub, self.profile.build_plans(plans))
 
     # --- Internal message handlers ---
 

@@ -62,7 +62,7 @@ from ..const import (
     DEFAULT_WET_FEEDING_DURATION,
     ZERO_STATE_SUCCESS,
 )
-from ..protocol.codec import build_wet_feed_now
+from ..protocol.codec import build_wet_feed_now, build_wet_feeding_plan
 from ..protocol.messages import WET_FIELDS
 from .common import ack_event, merge_state, warn_if_failed
 
@@ -84,6 +84,11 @@ class WetFeeder:
         CAP_FEEDING_PLANS,
         CAP_PET_PRESENCE,
     })
+
+    def build_plans(self, plans: list[dict]) -> str:
+        """A wet feeder uses its own plan command; the auger one is dropped
+        silently by the firmware, so plans would never reach the device."""
+        return build_wet_feeding_plan(plans)
 
     def handlers(self) -> dict[str, Any]:
         return {
@@ -181,10 +186,20 @@ async def _handle_feed_now_response(device: Any, payload: dict) -> None:
 
 
 async def _handle_plan_response(device: Any, payload: dict) -> None:
-    if warn_if_failed(device, CMD_WET_GRAIN_FEEDING_PLAN_SERVICE, payload):
-        plans = payload.get("plans")
-        if isinstance(plans, list):
-            device.feeding_plans = plans
+    """Acknowledgement of a plan push.
+
+    The ack echoes only {planId, syncTime} - not plate or duration - so it must
+    NOT replace the stored plans. Doing so would strip the plate off every plan
+    and leave serve_plate unable to resolve one.
+    """
+    if not warn_if_failed(device, CMD_WET_GRAIN_FEEDING_PLAN_SERVICE, payload):
+        return
+    acked = {p.get("planId") for p in payload.get("plans", []) if isinstance(p, dict)}
+    known = {p.get("planId") for p in device.feeding_plans}
+    if acked and acked != known:
+        _LOGGER.warning(
+            "Device %s stored plans %s but we hold %s", device.serial, acked, known
+        )
 
 
 async def _handle_some_attr_response(device: Any, payload: dict) -> None:

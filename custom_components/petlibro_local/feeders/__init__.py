@@ -44,6 +44,10 @@ class FeederProfile(Protocol):
     #: model (planId/execStep/finished differ on auger vs plate feeders).
     FIELDS: dict[str, str]
 
+    def build_plans(self, plans: list[dict]) -> str:
+        """Serialise a plan list using this model's plan command."""
+        ...
+
     def handlers(self) -> dict[str, Handler]:
         """Command handlers this model adds to the shared set."""
         ...

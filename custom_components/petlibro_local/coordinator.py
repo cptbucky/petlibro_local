@@ -107,7 +107,8 @@ class PetlibroCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             product_id,
             self.device.topics.product_id,
         )
-        self.device.topics.set_product_id(product_id)
+        # Recomposes the profile too, not just the topics.
+        self.device.set_product_id(product_id)
         if self._entry.data.get(CONF_PRODUCT_ID) != product_id:
             self.hass.config_entries.async_update_entry(
                 self._entry,

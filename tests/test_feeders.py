@@ -290,3 +290,70 @@ def test_schedule_sensor_attributes_describe_the_feeder():
     assert const.CAP_DISPENSE_PLATE not in dry.CAPABILITIES
     # A dry profile must not be asked for a plate count it does not have.
     assert getattr(dry, "PLATE_COUNT", None) is None
+
+
+# --- plan push: the surface where the model difference actually bites -------
+
+
+def test_wet_feeder_pushes_plans_with_its_own_command():
+    """Regression: the auger plan command is dropped silently by wet firmware,
+    so plans pushed with it never reach the device and every subsequent feed is
+    rejected with code 2050."""
+    f = Feeder(WET)
+    f.run(f.device.set_feeding_plans(list(PLANS)))
+    _, msg = f.last()
+    assert msg["cmd"] == "WET_GRAIN_FEEDING_PLAN_SERVICE"
+    assert [p["plate"] for p in msg["plans"]] == [1, 2, 3]
+
+
+def test_dry_feeder_still_pushes_the_auger_plan_command():
+    f = Feeder(DRY)
+    f.run(f.device.set_feeding_plans([{"planId": 1, "grainNum": 2}]))
+    _, msg = f.last()
+    assert msg["cmd"] == "FEEDING_PLAN_SERVICE"
+
+
+def test_plan_ack_does_not_strip_plate_from_stored_plans():
+    """The ack echoes only {planId, syncTime}. Treating it as the new plan list
+    would erase every plate and break serve_plate until restart."""
+    f = Feeder(WET)
+    f.device.feeding_plans = list(PLANS)
+    f.receive(
+        cmd="WET_GRAIN_FEEDING_PLAN_SERVICE",
+        msgId="a1",
+        code=0,
+        plans=[{"planId": 101, "syncTime": 0},
+               {"planId": 202, "syncTime": 0},
+               {"planId": 303, "syncTime": 0}],
+    )
+    assert f.device.feeding_plans == PLANS
+    f.sent.clear()
+    f.run(f.device.serve_plate(2))
+    assert f.last()[1]["planId"] == 202
+
+
+# --- learning the model after setup ----------------------------------------
+
+
+def test_learning_the_product_id_recomposes_the_profile():
+    """The sniffer and manual config paths default the model, so it is learned
+    from the first message. Rebinding topics alone leaves a plate feeder
+    behaving as an auger for the whole session."""
+    f = Feeder(None)
+    assert not f.device.supports(const.CAP_DISPENSE_PLATE)
+
+    f.device.set_product_id(WET)
+
+    assert f.device.supports(const.CAP_DISPENSE_PLATE)
+    assert f"dl/{WET}/" in f.device.topics.service_sub
+    # wet commands must now be handled, and auger ones gone
+    f.device.feeding_plans = list(PLANS)
+    f.run(f.device.serve_plate(1))
+    assert f.last()[1]["cmd"] == "WET_FOOD_FEED_NOW_SERVICE"
+
+
+def test_learning_the_same_product_id_is_a_no_op():
+    f = Feeder(WET)
+    before = f.device.profile
+    f.device.set_product_id(WET)
+    assert f.device.profile is before

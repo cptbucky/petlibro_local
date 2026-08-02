@@ -23,7 +23,7 @@ from ..const import (
     CMD_GRAIN_OUTPUT_EVENT,
     CMD_MANUAL_FEEDING_SERVICE,
 )
-from ..protocol.codec import build_manual_feed, build_response
+from ..protocol.codec import build_feeding_plan, build_manual_feed, build_response
 from .common import ack_event, merge_state, warn_if_failed
 
 _LOGGER = logging.getLogger(__name__)
@@ -40,6 +40,9 @@ class DryFeeder:
         CAP_FEEDING_PLANS,
         CAP_DETECTION,
     })
+
+    def build_plans(self, plans: list[dict]) -> str:
+        return build_feeding_plan(plans)
 
     def handlers(self) -> dict[str, Any]:
         return {

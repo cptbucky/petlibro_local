@@ -190,7 +190,7 @@ class PetlibroFeedingCard extends HTMLElement {
         <div class="header-right">
           <div class="next-feed">${nextDisplay}</div>
           <div class="header-sub">${todayFeeds > 0
-            ? `${todayFeeds} feed${todayFeeds > 1 ? 's' : ''} \u00b7 ${todayPortions}p today`
+            ? `${todayFeeds} feed${todayFeeds > 1 ? 's' : ''}${this._isPlateFeeder ? '' : ` \u00b7 ${todayPortions}p`} today`
             : 'No feeds today'}</div>
         </div>
       </div>`;
@@ -597,8 +597,19 @@ class PetlibroFeedingCard extends HTMLElement {
   }
 
   _handleChange(e) {
-    if (e.target.id === 'edit-time') {
-      this._editData.time = e.target.value;
+    // Everything the editor renders from _editData must be written back here.
+    // Day and audio toggles call _render(), which re-derives these inputs from
+    // _editData - so anything read only at submit time is silently discarded.
+    switch (e.target.id) {
+      case 'edit-time':
+        this._editData.time = e.target.value;
+        break;
+      case 'edit-plate':
+        this._editData.plate = parseInt(e.target.value, 10);
+        break;
+      case 'edit-duration':
+        this._editData.duration = parseInt(e.target.value, 10);
+        break;
     }
   }
 

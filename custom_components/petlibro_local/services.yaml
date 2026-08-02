@@ -40,8 +40,8 @@ set_feeding_plan:
         time:
     portions:
       name: Portions
-      description: Number of portions to dispense
-      required: true
+      description: Number of portions to dispense (auger feeders only)
+      required: false
       default: 1
       selector:
         number:
