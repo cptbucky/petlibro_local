@@ -135,6 +135,37 @@ ERROR_FIELDS = {
     "triggerTime": "error_trigger_time",
 }
 
+# Wet food feeder fields (plate/door models such as the PLAF109 Polar).
+# These devices report no grain attributes at all - no surplusGrain, no
+# motorState, no grainOutletState - so none of the auger maps apply.
+WET_FIELDS = {
+    # WET_GRAIN_OUTPUT_EVENT
+    "execStep": "wet_exec_step",
+    "execTime": "wet_exec_time",
+    "finished": "wet_finished",
+    "feedingDuration": "feeding_duration",
+    "planId": "plan_id",
+    "plate": "plate",
+    # Plate / door state. zeroState is the plate homing result: the firmware
+    # declines to actuate unless it reads SUCCESS, so a TIMEOUT here is the
+    # difference between "the feeder is broken" and "reseat the plate".
+    "zeroState": "zero_state",
+    "platePosition": "plate_position",
+    "closeDoorTime": "close_door_time",
+    "doorCheckSignalTime": "door_check_signal_time",
+    "doorNotcheckSignalTime": "door_notcheck_signal_time",
+    "doorStuckCurrent": "door_stuck_current",
+    "plateStuckCurrent": "plate_stuck_current",
+    "plateErrTimeout": "plate_err_timeout",
+    "idenFirstPlateTime": "iden_first_plate_time",
+    "irSensorIdenTimeout": "ir_sensor_iden_timeout",
+    # Call-to-eat ringer
+    "ringerMode": "ringer_mode",
+    "ringerInterval": "ringer_interval",
+    "ringerDuration": "ringer_duration",
+    "temperatureCheckSwitch": "temperature_check_switch",
+}
+
 # Feeding plan fields (within plan objects)
 FEEDING_PLAN_FIELDS = {
     "planId": "plan_id",
@@ -148,17 +179,26 @@ FEEDING_PLAN_FIELDS = {
 }
 
 
-def normalize_payload(payload: dict[str, Any]) -> dict[str, Any]:
-    """Convert a camelCase MQTT payload to snake_case internal state dict.
+def normalize_payload(
+    payload: dict[str, Any], extra_fields: dict[str, str] | None = None
+) -> dict[str, Any]:
+    """Convert a camelCase MQTT payload to a snake_case internal state dict.
 
-    Only includes fields that are in the FIELD_MAP. Unknown fields are
-    preserved with their original key for forward-compatibility.
+    Fields not present in any map are dropped.
+
+    `extra_fields` lets a feeder profile supply model-specific mappings, and it
+    takes precedence over the shared maps. That matters because the same wire
+    key can mean different things on different models: `planId`, `execStep` and
+    `finished` all appear in the auger event map, but on a wet feeder they
+    belong to a plate feed cycle rather than a grain dispense.
     """
     result: dict[str, Any] = {}
     for mqtt_key, value in payload.items():
         if mqtt_key in META_FIELDS:
             continue
-        if mqtt_key in FIELD_MAP:
+        if extra_fields and mqtt_key in extra_fields:
+            result[extra_fields[mqtt_key]] = value
+        elif mqtt_key in FIELD_MAP:
             result[FIELD_MAP[mqtt_key]] = value
         elif mqtt_key in DEVICE_START_FIELDS:
             result[DEVICE_START_FIELDS[mqtt_key]] = value

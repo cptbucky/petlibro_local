@@ -76,8 +76,55 @@ def build_ntp_sync() -> str:
 
 
 def build_manual_feed(portions: int) -> str:
-    """Build manual feeding command."""
+    """Build manual feeding command (auger/dry feeders)."""
     return build_command("MANUAL_FEEDING_SERVICE", grainNum=portions)
+
+
+def build_wet_feed_now(plan_id: int, feeding_duration: int) -> str:
+    """Build immediate feed command for wet food feeders.
+
+    Unlike the dry-feeder command this takes no quantity: a wet feeder rotates
+    its plate and holds the door open for feeding_duration seconds. It also
+    requires an existing plan_id - the device borrows that plan's plate, so
+    there is no way to feed ad-hoc without a plan to reference.
+
+    The device only actuates when its plate is homed (zeroState == SUCCESS);
+    otherwise it accepts the command and silently does nothing.
+    """
+    return build_command(
+        "WET_FOOD_FEED_NOW_SERVICE",
+        planId=plan_id,
+        feedingDuration=feeding_duration,
+    )
+
+
+def build_wet_feeding_plan(plans: list[dict], opt_code: str = "PLATE_POSTPONE") -> str:
+    """Build the wet feeder plan sync command.
+
+    Each plan carries planId, executionTime ("HH:MM"), executionDay
+    ("YYYY-MM-DD"), plate and feedingDuration. opt_code selects the plan
+    operation; PLATE_POSTPONE is the only value observed from the vendor cloud.
+    """
+    normalised = [{**p, "optCode": p.get("optCode", opt_code)} for p in plans]
+    return build_command("WET_GRAIN_FEEDING_PLAN_SERVICE", plans=normalised)
+
+
+def build_get_some_attrs(attr_keys: list[str]) -> str:
+    """Build a targeted attribute read.
+
+    Cheaper than ATTR_GET_SERVICE and the only way the vendor cloud polls
+    zeroState before feeding.
+    """
+    return build_command("GET_SOME_ATTR_SERVICE", attrKeys=attr_keys)
+
+
+def build_function_test(action: str = "AUDIO") -> str:
+    """Build a device self-test command. AUDIO rings the feeder's bell."""
+    return json.dumps({
+        "cmd": "DEVICE_FUNCTION_TEST_SERVICE",
+        "ts": timestamp_now_ms(),
+        "action": action,
+    })
 
 
 def build_attr_get() -> str:

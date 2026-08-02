@@ -74,6 +74,46 @@ CMD_TUTK_CONTRACT_SERVICE = "TUTK_CONTRACT_SERVICE"
 CMD_DETECTION_EVENT = "DETECTION_EVENT"
 CMD_DEVICE_DATA_EVENT = "DEVICE_DATA_EVENT"
 
+# --- Wet food feeders (e.g. PLAF109 Polar) ---
+# These have a rotating plate and a motorised door rather than an auger, and
+# implement a different command set. MANUAL_FEEDING_SERVICE/grainNum is not
+# implemented at all - the firmware drops it silently, exactly as it does an
+# entirely made-up command.
+CMD_WET_FOOD_FEED_NOW_SERVICE = "WET_FOOD_FEED_NOW_SERVICE"
+CMD_WET_GRAIN_FEEDING_PLAN_SERVICE = "WET_GRAIN_FEEDING_PLAN_SERVICE"
+CMD_WET_GRAIN_OUTPUT_EVENT = "WET_GRAIN_OUTPUT_EVENT"
+CMD_GET_SOME_ATTR_SERVICE = "GET_SOME_ATTR_SERVICE"
+CMD_DEVICE_FUNCTION_TEST_SERVICE = "DEVICE_FUNCTION_TEST_SERVICE"
+CMD_DEVICE_CONFIG_SYNC = "DEVICE_CONFIG_SYNC"
+CMD_DEVICE_LOG_REPORT_EVENT = "DEVICE_LOG_REPORT_EVENT"
+
+# Feeding lifecycle, reported via WET_GRAIN_OUTPUT_EVENT.execStep
+EXEC_STEP_GRAIN_THAW = "GRAIN_THAW"
+EXEC_STEP_GRAIN_START = "GRAIN_START"
+EXEC_STEP_OPEN_DOOR = "OPEN_DOOR"
+EXEC_STEP_GRAIN_END = "GRAIN_END"
+
+# Plate homing state (zeroState). The firmware refuses to actuate unless this
+# reads SUCCESS; a jammed or misseated plate reports TIMEOUT, which otherwise
+# surfaces to the user only as an unexplained app timeout.
+ZERO_STATE_PROCESSING = "PROCESSING"
+ZERO_STATE_SUCCESS = "SUCCESS"
+ZERO_STATE_TIMEOUT = "TIMEOUT"
+
+# Fallback feed duration (seconds) when a plan does not carry one.
+DEFAULT_WET_FEEDING_DURATION = 240
+
+# --- Capabilities ---
+# Entity platforms gate on these rather than on product id, so an untested
+# model gets the entities its protocol actually supports instead of being
+# assumed to have an auger. Declared by each feeder profile in feeders/.
+CAP_DISPENSE_PORTIONS = "dispense_portions"  # auger; feed takes a quantity
+CAP_DISPENSE_PLATE = "dispense_plate"        # carousel; feed references a plan
+CAP_PLATE = "plate"                          # plate position / homing state
+CAP_AUDIO_TEST = "audio_test"                # can play call-to-eat audio
+CAP_FEEDING_PLANS = "feeding_plans"
+CAP_DETECTION = "detection"                  # camera models
+
 # Code response values
 CODE_OK = 0
 CODE_ERROR_DEVICE_NOT_BOUND = 2030

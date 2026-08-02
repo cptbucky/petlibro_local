@@ -18,15 +18,10 @@ from .const import (
     CMD_ATTR_PUSH_EVENT,
     CMD_ATTR_SET_SERVICE,
     CMD_BINDING,
-    CMD_DETECTION_EVENT,
     CMD_DEVICE_START_EVENT,
     CMD_ERROR_EVENT,
-    CMD_FEEDING_PLAN_SERVICE,
     CMD_GET_CONFIG,
-    CMD_GET_FEEDING_PLAN_EVENT,
-    CMD_GRAIN_OUTPUT_EVENT,
     CMD_HEARTBEAT,
-    CMD_MANUAL_FEEDING_SERVICE,
     CMD_NTP,
     CMD_NTP_SYNC,
     CMD_RESET,
@@ -38,7 +33,8 @@ from .const import (
 from .protocol.codec import (
     build_attr_get,
     build_command,
-    build_manual_feed,
+    build_function_test,
+    build_get_some_attrs,
     build_ntp_response,
     build_ntp_sync,
     build_response,
@@ -46,6 +42,7 @@ from .protocol.codec import (
     timestamp_now_ms,
     timezone_offset_hours,
 )
+from .feeders import get_profile
 from .protocol.messages import normalize_payload
 from .protocol.topics import PetlibroTopics
 
@@ -73,6 +70,15 @@ class PetlibroDevice:
         )
         self._mqtt_publish = mqtt_publish
         self._on_state_changed = on_state_changed
+
+        # Model-specific behaviour is composed, not inherited. The profile
+        # supplies the commands this model understands and how it feeds; its
+        # handlers extend the shared set rather than overriding it.
+        self.profile = get_profile(product_id)
+        self._handlers: dict[str, Callable] = {
+            **self._SHARED_HANDLERS,
+            **self.profile.handlers(),
+        }
 
         # Consolidated device state
         self.state: dict[str, Any] = {}
@@ -117,7 +123,7 @@ class PetlibroDevice:
 
         _LOGGER.debug("Device %s cmd=%s", self.serial, cmd)
 
-        handler = self._HANDLERS.get(cmd)
+        handler = self._handlers.get(cmd)
         if handler:
             await handler(self, payload)
         else:
@@ -129,9 +135,32 @@ class PetlibroDevice:
         """Request full attribute snapshot from device."""
         await self._publish(self.topics.service_sub, build_attr_get())
 
+    def supports(self, capability: str) -> bool:
+        """Whether this model exposes a capability (see const.CAP_*)."""
+        return capability in self.profile.CAPABILITIES
+
+    async def dispense(self, **kwargs: Any) -> None:
+        """Feed now.
+
+        Arguments are model-specific and deliberately not normalised: an auger
+        feeder takes `portions`, a wet feeder takes `plan_id`. Flattening those
+        into one signature would mean every caller passing arguments that are
+        meaningless to half the devices.
+        """
+        await self.profile.dispense(self, **kwargs)
+
     async def manual_feed(self, portions: int = 1) -> None:
-        """Dispense food manually."""
-        await self._publish(self.topics.service_sub, build_manual_feed(portions))
+        """Deprecated alias for dispense(portions=...). Kept so existing
+        callers and any user automations continue to work."""
+        await self.dispense(portions=portions)
+
+    async def ring_bell(self) -> None:
+        """Play the feeder's call-to-eat audio."""
+        await self._publish(self.topics.service_sub, build_function_test("AUDIO"))
+
+    async def request_attrs(self, attr_keys: list[str]) -> None:
+        """Request specific attributes instead of a full snapshot."""
+        await self._publish(self.topics.service_sub, build_get_some_attrs(attr_keys))
 
     async def set_attributes(self, **attrs: Any) -> None:
         """Set device attributes (sparse). Use camelCase MQTT keys."""
@@ -175,7 +204,7 @@ class PetlibroDevice:
         self._heartbeat_count = count
 
         # Update state with heartbeat data
-        state_update = normalize_payload(payload)
+        state_update = normalize_payload(payload, self.profile.FIELDS)
         if state_update:
             self.state.update(state_update)
 
@@ -212,7 +241,7 @@ class PetlibroDevice:
     async def _handle_device_start(self, payload: dict) -> None:
         """Device just started up — respond and request full state."""
         msg_id = payload.get("msgId")
-        self.device_info = normalize_payload(payload)
+        self.device_info = normalize_payload(payload, self.profile.FIELDS)
         self.online = True
         self._last_heartbeat = time.monotonic()
 
@@ -237,13 +266,13 @@ class PetlibroDevice:
         )
 
         # Update state
-        state_update = normalize_payload(payload)
+        state_update = normalize_payload(payload, self.profile.FIELDS)
         self.state.update(state_update)
         self._notify_state_changed()
 
     async def _handle_attr_get_response(self, payload: dict) -> None:
         """Full attribute snapshot from device (response to our request)."""
-        state_update = normalize_payload(payload)
+        state_update = normalize_payload(payload, self.profile.FIELDS)
         self.state.update(state_update)
         self._notify_state_changed()
 
@@ -253,57 +282,6 @@ class PetlibroDevice:
         if code != CODE_OK:
             _LOGGER.warning(
                 "Device %s ATTR_SET_SERVICE failed: code=%s", self.serial, code
-            )
-
-    async def _handle_grain_output(self, payload: dict) -> None:
-        """Grain dispensing event from device."""
-        msg_id = payload.get("msgId")
-        exec_step = payload.get("execStep", "")
-
-        # Acknowledge
-        await self._publish(
-            self.topics.service_sub,
-            build_response(CMD_GRAIN_OUTPUT_EVENT, msg_id, execStep=exec_step),
-        )
-
-        # Update state with grain output info
-        state_update = normalize_payload(payload)
-        self.state.update(state_update)
-        self._notify_state_changed()
-
-    async def _handle_get_feeding_plan(self, payload: dict) -> None:
-        """Device requesting current feeding plans — respond with stored plans."""
-        msg_id = payload.get("msgId")
-
-        # Build plan response
-        plans_payload = []
-        for plan in self.feeding_plans:
-            plan_data = dict(plan)
-            plans_payload.append(plan_data)
-
-        await self._publish(
-            self.topics.service_sub,
-            build_response(
-                CMD_GET_FEEDING_PLAN_EVENT, msg_id, plans=plans_payload
-            ),
-        )
-
-    async def _handle_feeding_plan_response(self, payload: dict) -> None:
-        """Device acknowledged feeding plan update."""
-        code = payload.get("code", -1)
-        if code != CODE_OK:
-            msg = payload.get("msg", "unknown")
-            _LOGGER.warning(
-                "Device %s FEEDING_PLAN_SERVICE failed: code=%s msg=%s",
-                self.serial, code, msg,
-            )
-
-    async def _handle_manual_feeding_response(self, payload: dict) -> None:
-        """Device acknowledged manual feeding."""
-        code = payload.get("code", -1)
-        if code != CODE_OK:
-            _LOGGER.warning(
-                "Device %s MANUAL_FEEDING_SERVICE failed: code=%s", self.serial, code
             )
 
     async def _handle_error_event(self, payload: dict) -> None:
@@ -318,16 +296,25 @@ class PetlibroDevice:
             build_response(CMD_ERROR_EVENT, msg_id),
         )
 
-        state_update = normalize_payload(payload)
+        state_update = normalize_payload(payload, self.profile.FIELDS)
         self.state.update(state_update)
         self._notify_state_changed()
 
     async def _handle_get_config(self, payload: dict) -> None:
-        """Device requesting config — acknowledge."""
-        msg_id = payload.get("msgId")
-        await self._publish(
-            self.topics.config_sub,
-            build_response(CMD_GET_CONFIG, msg_id),
+        """Device requesting config.
+
+        Deliberately does not reply. config/sub is the server-to-device
+        *request* channel, so echoing cmd=GET_CONFIG back on it is
+        indistinguishable from a fresh request: the device answers, we echo
+        again, and the two sit in a loop. Measured at ~0.8 messages/sec in each
+        direction until the integration was stopped.
+
+        The vendor cloud never sends GET_CONFIG to the device at all - it
+        pushes DEVICE_CONFIG_SYNC, unprompted - so there is nothing for a local
+        broker to usefully answer here.
+        """
+        _LOGGER.debug(
+            "Device %s requested config; nothing to send locally", self.serial
         )
 
     async def _handle_binding(self, payload: dict) -> None:
@@ -347,29 +334,11 @@ class PetlibroDevice:
             build_response(CMD_RESET, msg_id),
         )
 
-    async def _handle_detection_event(self, payload: dict) -> None:
-        """Motion or sound detection event from device camera."""
-        msg_id = payload.get("msgId")
-        detection_type = payload.get("type", "UNKNOWN")
-        ts = payload.get("ts")
-        _LOGGER.debug(
-            "Device %s detection: type=%s ts=%s", self.serial, detection_type, ts
-        )
-
-        # Acknowledge
-        await self._publish(
-            self.topics.event_sub,
-            build_response(CMD_DETECTION_EVENT, msg_id),
-        )
-
-        # Store in state for the event entity to pick up
-        self.state["detection_type"] = detection_type
-        self.state["detection_ts"] = ts
-        self._notify_state_changed()
-
     # --- Handler dispatch table ---
 
-    _HANDLERS: dict[str, Callable] = {
+    # Commands every model implements. Model-specific commands come from the
+    # composed feeder profile and are merged into self._handlers at init.
+    _SHARED_HANDLERS: dict[str, Callable] = {
         CMD_HEARTBEAT: _handle_heartbeat,
         CMD_NTP: _handle_ntp,
         CMD_NTP_SYNC: _handle_ntp_sync,
@@ -377,12 +346,7 @@ class PetlibroDevice:
         CMD_ATTR_PUSH_EVENT: _handle_attr_push,
         CMD_ATTR_GET_SERVICE: _handle_attr_get_response,
         CMD_ATTR_SET_SERVICE: _handle_attr_set_response,
-        CMD_GRAIN_OUTPUT_EVENT: _handle_grain_output,
-        CMD_GET_FEEDING_PLAN_EVENT: _handle_get_feeding_plan,
-        CMD_FEEDING_PLAN_SERVICE: _handle_feeding_plan_response,
-        CMD_MANUAL_FEEDING_SERVICE: _handle_manual_feeding_response,
         CMD_ERROR_EVENT: _handle_error_event,
-        CMD_DETECTION_EVENT: _handle_detection_event,
         CMD_GET_CONFIG: _handle_get_config,
         CMD_BINDING: _handle_binding,
         CMD_RESET: _handle_reset,
