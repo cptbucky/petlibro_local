@@ -25,6 +25,10 @@ TOPIC_BROADCAST_SUB = TOPIC_BASE + "/broadcast/sub"
 
 # Config entry keys
 CONF_SERIAL = "serial"
+# Product/model id (e.g. PLAF203, PLAF109). Forms the second segment of every
+# topic: dl/{product_id}/{serial}/device/... Entries created before this key
+# existed fall back to DEVICE_PRODUCT_ID.
+CONF_PRODUCT_ID = "product_id"
 CONF_MQTT_USERNAME = "mqtt_username"
 CONF_MQTT_PASSWORD = "mqtt_password"
 CONF_FEEDING_PLANS = "feeding_plans"

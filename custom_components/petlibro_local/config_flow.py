@@ -23,7 +23,9 @@ from .const import (
     CONF_FEEDING_PLANS,
     CONF_MQTT_USERNAME,
     CONF_MQTT_PASSWORD,
+    CONF_PRODUCT_ID,
     CONF_SERIAL,
+    DEVICE_PRODUCT_ID,
     DOMAIN,
     MAX_FEEDING_PLANS,
 )
@@ -181,6 +183,10 @@ class PetlibroLocalConfigFlow(ConfigFlow, domain=DOMAIN):
     def __init__(self) -> None:
         """Initialize the config flow."""
         self._serial: str = ""
+        # Overwritten by MQTT discovery when the model can be read off the
+        # topic. The sniffer and manual paths have no topic to read, so they
+        # keep this default.
+        self._product_id: str = DEVICE_PRODUCT_ID
         self._mqtt_username: str = ""
         self._mqtt_password: str = ""
 
@@ -227,9 +233,17 @@ class PetlibroLocalConfigFlow(ConfigFlow, domain=DOMAIN):
 
         def _on_message(msg) -> None:
             nonlocal discovered
+            # dl/{product_id}/{serial}/device/heart/post
             parts = msg.topic.split("/")
             if len(parts) >= 3:
-                discovered = {"serial": parts[2].upper()}
+                discovered = {
+                    "serial": parts[2].upper(),
+                    # Capture the model rather than assuming DEVICE_PRODUCT_ID.
+                    # Without this every device is addressed as a PLAF203 and
+                    # anything else silently receives nothing, since subscribing
+                    # to a topic no one publishes to is not an error in MQTT.
+                    "product_id": parts[1].upper(),
+                }
                 event.set()
 
         try:
@@ -252,6 +266,7 @@ class PetlibroLocalConfigFlow(ConfigFlow, domain=DOMAIN):
             return None
 
         self._serial = discovered["serial"]
+        self._product_id = discovered.get("product_id") or self._product_id
 
         # Read credentials from Mosquitto options (feeder is already connected)
         self._mqtt_username, self._mqtt_password = await _read_mosquitto_credentials()
@@ -340,6 +355,7 @@ class PetlibroLocalConfigFlow(ConfigFlow, domain=DOMAIN):
                 title=f"Petlibro {self._serial[-6:]}",
                 data={
                     CONF_SERIAL: self._serial,
+                    CONF_PRODUCT_ID: self._product_id,
                     CONF_MQTT_USERNAME: self._mqtt_username,
                     CONF_MQTT_PASSWORD: self._mqtt_password,
                 },
@@ -378,6 +394,7 @@ class PetlibroLocalConfigFlow(ConfigFlow, domain=DOMAIN):
                 title=f"Petlibro {self._serial[-6:]}",
                 data={
                     CONF_SERIAL: self._serial,
+                    CONF_PRODUCT_ID: self._product_id,
                     CONF_MQTT_USERNAME: self._mqtt_username,
                     CONF_MQTT_PASSWORD: self._mqtt_password,
                 },

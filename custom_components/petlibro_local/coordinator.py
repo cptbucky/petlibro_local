@@ -12,6 +12,7 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 
 from .const import (
+    CONF_PRODUCT_ID,
     CONF_SERIAL,
     DOMAIN,
 )
@@ -37,10 +38,13 @@ class PetlibroCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._entry = entry
         self._serial = entry.data[CONF_SERIAL]
 
+        # .get() rather than [] — entries created before CONF_PRODUCT_ID existed
+        # have no such key, and would otherwise raise KeyError on startup.
         self.device = PetlibroDevice(
             serial=self._serial,
             mqtt_publish=self._mqtt_publish,
             on_state_changed=self._on_device_state_changed,
+            product_id=entry.data.get(CONF_PRODUCT_ID),
         )
 
         self._mqtt_client: Any = None
@@ -55,8 +59,11 @@ class PetlibroCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         """Set up MQTT connection and subscribe to device topics."""
         from homeassistant.components import mqtt
 
-        # Subscribe to all device messages (wildcard)
-        topic = self.device.topics.subscribe_all
+        # Subscribe by serial, wildcarding the model segment. The model is only
+        # known up front via the MQTT-discovery config path; the sniffer and
+        # manual paths default it, and a wrong model means zero messages with
+        # no error. The real one is learned in _on_mqtt_message below.
+        topic = self.device.topics.subscribe_any_product
         _LOGGER.info("Subscribing to %s", topic)
 
         unsub = await mqtt.async_subscribe(
@@ -76,9 +83,36 @@ class PetlibroCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     @callback
     def _on_mqtt_message(self, msg) -> None:
         """Handle incoming MQTT message from HA's MQTT component."""
+        # dl/{product_id}/{serial}/device/{kind}/post
+        parts = msg.topic.split("/")
+        if len(parts) >= 3 and parts[1] and parts[1] != "+":
+            self._learn_product_id(parts[1].upper())
         self.hass.async_create_task(
             self.device.handle_message(msg.topic, msg.payload)
         )
+
+    @callback
+    def _learn_product_id(self, product_id: str) -> None:
+        """Adopt the model the device actually publishes under.
+
+        Subscribing wildcards the model, but commands we publish must use the
+        exact one, so correct the topic builder as soon as we observe it. Also
+        persisted so the stored entry stops being wrong.
+        """
+        if product_id == self.device.topics.product_id:
+            return
+        _LOGGER.info(
+            "Device %s reports model %s (was %s) - correcting topics",
+            self._serial,
+            product_id,
+            self.device.topics.product_id,
+        )
+        self.device.topics.set_product_id(product_id)
+        if self._entry.data.get(CONF_PRODUCT_ID) != product_id:
+            self.hass.config_entries.async_update_entry(
+                self._entry,
+                data={**self._entry.data, CONF_PRODUCT_ID: product_id},
+            )
 
     async def _mqtt_publish(self, topic: str, payload: str) -> None:
         """Publish an MQTT message via HA's MQTT component."""

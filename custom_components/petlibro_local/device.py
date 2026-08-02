@@ -62,9 +62,15 @@ class PetlibroDevice:
         serial: str,
         mqtt_publish: Callable[[str, str], asyncio.coroutines],
         on_state_changed: StateCallback | None = None,
+        product_id: str | None = None,
     ) -> None:
         self.serial = serial
-        self.topics = PetlibroTopics(serial)
+        # product_id is optional so config entries created before it was stored
+        # keep working; PetlibroTopics applies DEVICE_PRODUCT_ID in that case.
+        self.product_id = product_id
+        self.topics = (
+            PetlibroTopics(serial, product_id) if product_id else PetlibroTopics(serial)
+        )
         self._mqtt_publish = mqtt_publish
         self._on_state_changed = on_state_changed
 
