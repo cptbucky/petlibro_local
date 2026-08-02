@@ -39,6 +39,7 @@ from ..const import (
     CMD_WET_FOOD_FEED_NOW_SERVICE,
     CMD_WET_GRAIN_FEEDING_PLAN_SERVICE,
     CMD_WET_GRAIN_OUTPUT_EVENT,
+    CODE_ERROR_PLAN_NOT_FOUND,
     CMD_PET_DETECT_EVENT,
     CMD_MACHINE_INFRARED_EVENT,
     CAP_PET_PRESENCE,
@@ -149,6 +150,18 @@ async def _handle_wet_output(device: Any, payload: dict) -> None:
 
 
 async def _handle_feed_now_response(device: Any, payload: dict) -> None:
+    if payload.get("code") == CODE_ERROR_PLAN_NOT_FOUND:
+        # Worth its own message: the generic "code=2050" tells a user nothing,
+        # and the cause is specific and fixable.
+        _LOGGER.error(
+            "Device %s rejected the feed: planId %s is not stored on the "
+            "device. A feed references an existing plan and the device reads "
+            "the plate from it, so the plan must be pushed before it can be "
+            "served.",
+            device.serial,
+            payload.get("planId"),
+        )
+        return
     warn_if_failed(device, CMD_WET_FOOD_FEED_NOW_SERVICE, payload)
 
 

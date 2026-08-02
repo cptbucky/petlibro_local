@@ -123,6 +123,10 @@ CAP_PET_PRESENCE = "pet_presence"            # infrared pet proximity sensor
 # Code response values
 CODE_OK = 0
 CODE_ERROR_DEVICE_NOT_BOUND = 2030
+# Returned by WET_FOOD_FEED_NOW_SERVICE when planId does not match a plan
+# stored on the device. Confirmed by sending a deliberately unreferenced
+# planId: the device refuses cleanly and does not actuate.
+CODE_ERROR_PLAN_NOT_FOUND = 2050
 
 # Entity platforms
 PLATFORMS = [
