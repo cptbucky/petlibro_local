@@ -167,23 +167,39 @@ No grain attributes appear — no `surplusGrain`, `motorState` or
 `grainOutletState`. `temperature` arrives on the heartbeat, this being a cooled
 feeder.
 
-## Open problem: no telemetry on a local broker
+## Telemetry on a local broker — works
 
-**Observed, cause unknown.** When connected to a local broker the device
-publishes **heartbeats only**. A complete feed cycle — audio, rotation, door
-open, door close — produced no `WET_GRAIN_OUTPUT_EVENT`, no `execStep`, and no
-`platePosition` update.
+**Tested.** An earlier draft of this document claimed the device publishes only
+heartbeats when connected to a local broker, and named that the most
+consequential open question for the integration. **That was wrong, and it was a
+measurement error rather than device behaviour.**
 
-Every rich event recorded in this document was captured while the device was
-connected to the vendor cloud through a proxy.
+Queried directly with `GET_SOME_ATTR_SERVICE` against a local Mosquitto, the
+device replied within milliseconds:
 
-If this holds, an integration can drive the feeder but not observe it: schedules
-and buttons work, while state sensors stay empty. The obvious suspect is a
-handshake a local broker does not complete — `DEVICE_CONFIG_SYNC` is pushed
-unprompted by the vendor and is currently only logged.
+```
+event/post  GET_SOME_ATTR_SERVICE  code 0
+event/post  ATTR_PUSH_EVENT  platePosition: 3
+event/post  ATTR_PUSH_EVENT  zeroState: SUCCESS
+```
 
-This is the most consequential open question for the integration and is worth
-resolving before building anything that depends on device state.
+This was the *control* arm of a test of the theory that some handshake
+(`DEVICE_CONFIG_SYNC`) had to be completed before the device would report. The
+control passed before the handshake was sent, so the theory was never needed.
+Sending `DEVICE_CONFIG_SYNC` afterwards changed nothing; the device
+acknowledges it with `code 0` and behaves identically either way.
+
+Home Assistant is also visibly acknowledging events on `event/sub` in the same
+capture, so the integration receives them.
+
+The earlier empty captures came from the `mosquitto_sub | grep` buffering
+problem described under Method notes: events that certainly occurred appeared
+never to have happened.
+
+**Still unconfirmed:** a full `execStep` sequence has not been cleanly observed
+on a local broker during a scheduled feed. That is likely the same measurement
+problem, but it has not been proven either way, so anything depending on feed
+progress should be verified before being relied upon.
 
 ## Response codes
 
