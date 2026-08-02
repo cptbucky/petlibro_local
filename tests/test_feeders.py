@@ -71,48 +71,84 @@ class Feeder:
 
 def test_dry_feeder_dispenses_a_quantity():
     f = Feeder(DRY)
-    f.run(f.device.dispense(portions=3))
+    f.run(f.device.manual_feed(portions=3))
     topic, msg = f.last()
     assert msg["cmd"] == "MANUAL_FEEDING_SERVICE"
     assert msg["grainNum"] == 3
     assert topic.endswith("/device/service/sub")
 
 
-def test_wet_feeder_dispenses_by_referencing_a_plan():
+PLANS = [
+    {"planId": 101, "plate": 1, "feedingDuration": 240},
+    {"planId": 202, "plate": 2, "feedingDuration": 180},
+    {"planId": 303, "plate": 3, "feedingDuration": 120},
+]
+
+
+def test_wet_feeder_serves_a_plate_by_referencing_its_plan():
     f = Feeder(WET)
-    f.device.feeding_plans = [{"planId": 44122386, "feedingDuration": 240, "plate": 1}]
-    f.run(f.device.dispense())
+    f.device.feeding_plans = list(PLANS)
+    f.run(f.device.serve_plate(1))
     _, msg = f.last()
     assert msg["cmd"] == "WET_FOOD_FEED_NOW_SERVICE"
-    assert msg["planId"] == 44122386
+    assert msg["planId"] == 101
     assert msg["feedingDuration"] == 240
     # A wet feeder has no notion of quantity.
     assert "grainNum" not in msg
+
+
+@pytest.mark.parametrize("plate,plan_id,duration", [(1, 101, 240), (2, 202, 180), (3, 303, 120)])
+def test_each_plate_resolves_to_its_own_plan(plate, plan_id, duration):
+    """The command carries a planId, not a plate, so serving plate N means
+    finding the plan that owns plate N."""
+    f = Feeder(WET)
+    f.device.feeding_plans = list(PLANS)
+    f.run(f.device.serve_plate(plate))
+    _, msg = f.last()
+    assert msg["planId"] == plan_id
+    assert msg["feedingDuration"] == duration
 
 
 def test_wet_feeder_never_sends_the_auger_command():
     """The firmware drops MANUAL_FEEDING_SERVICE silently, so sending it looks
     identical to success while nothing happens."""
     f = Feeder(WET)
-    f.device.feeding_plans = [{"planId": 1, "feedingDuration": 60}]
-    f.run(f.device.dispense())
+    f.device.feeding_plans = list(PLANS)
+    f.run(f.device.serve_plate(1))
     assert "MANUAL_FEEDING_SERVICE" not in f.commands
 
 
-def test_wet_feeder_refuses_to_feed_without_a_plan():
-    """Feeding borrows the plate from a plan, so with no plan there is nothing
-    coherent to send - better to refuse than emit an invalid command."""
+def test_wet_feeder_refuses_a_plate_with_no_plan():
+    """Feeding takes the plate from a plan, so with no plan for that plate
+    there is nothing coherent to send."""
     f = Feeder(WET)
-    f.run(f.device.dispense())
+    f.device.feeding_plans = [PLANS[0]]
+    f.run(f.device.serve_plate(2))
     assert f.sent == []
 
 
-def test_wet_feeder_uses_explicit_plan_id_when_given():
+@pytest.mark.parametrize("plate", [0, 4, -1])
+def test_wet_feeder_rejects_plates_outside_the_carousel(plate):
     f = Feeder(WET)
-    f.device.feeding_plans = [{"planId": 111, "feedingDuration": 60}]
-    f.run(f.device.dispense(plan_id=222))
-    _, msg = f.last()
-    assert msg["planId"] == 222
+    f.device.feeding_plans = list(PLANS)
+    f.run(f.device.serve_plate(plate))
+    assert f.sent == []
+
+
+def test_manual_feed_is_refused_on_a_wet_feeder():
+    """manual_feed is a documented service, so it can be called against any
+    device. On a plate feeder it must refuse rather than send a command the
+    firmware will silently drop."""
+    f = Feeder(WET)
+    f.device.feeding_plans = list(PLANS)
+    f.run(f.device.manual_feed(portions=2))
+    assert f.sent == []
+
+
+def test_serve_plate_is_refused_on_a_dry_feeder():
+    f = Feeder(DRY)
+    f.run(f.device.serve_plate(1))
+    assert f.sent == []
 
 
 def test_manual_feed_alias_still_works():
@@ -136,7 +172,7 @@ def test_unknown_model_falls_back_to_auger_behaviour(pid):
     """Preserves the integration's historical default rather than leaving an
     untested feeder with no behaviour at all."""
     f = Feeder(pid)
-    f.run(f.device.dispense(portions=1))
+    f.run(f.device.manual_feed(portions=1))
     assert f.last()[1]["cmd"] == "MANUAL_FEEDING_SERVICE"
 
 

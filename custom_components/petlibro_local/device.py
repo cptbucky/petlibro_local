@@ -139,20 +139,38 @@ class PetlibroDevice:
         """Whether this model exposes a capability (see const.CAP_*)."""
         return capability in self.profile.CAPABILITIES
 
-    async def dispense(self, **kwargs: Any) -> None:
-        """Feed now.
-
-        Arguments are model-specific and deliberately not normalised: an auger
-        feeder takes `portions`, a wet feeder takes `plan_id`. Flattening those
-        into one signature would mean every caller passing arguments that are
-        meaningless to half the devices.
-        """
-        await self.profile.dispense(self, **kwargs)
+    # Feeding is model-specific: there is no shared verb. Auger feeders
+    # dispense a quantity; wet feeders run a plate/door sequence with no
+    # quantity at all. Entity platforms pick the right one via supports().
+    # These thin wrappers exist because `manual_feed` is a documented service,
+    # so a user automation can call it against any device.
 
     async def manual_feed(self, portions: int = 1) -> None:
-        """Deprecated alias for dispense(portions=...). Kept so existing
-        callers and any user automations continue to work."""
-        await self.dispense(portions=portions)
+        """Dispense a quantity of kibble. Auger feeders only."""
+        dispense = getattr(self.profile, "dispense", None)
+        if dispense is None:
+            _LOGGER.error(
+                "Device %s is a %s: it feeds by serving a plate, not by "
+                "quantity. Use the Serve Plate buttons or the serve_plate "
+                "service instead of manual_feed.",
+                self.serial,
+                self.profile.MODEL_NAME,
+            )
+            return
+        await dispense(self, portions=portions)
+
+    async def serve_plate(self, plate: int) -> None:
+        """Serve a carousel plate. Wet food feeders only."""
+        serve = getattr(self.profile, "serve_plate", None)
+        if serve is None:
+            _LOGGER.error(
+                "Device %s is a %s: it has no plates. Use manual_feed to "
+                "dispense a quantity instead.",
+                self.serial,
+                self.profile.MODEL_NAME,
+            )
+            return
+        await serve(self, plate)
 
     async def ring_bell(self) -> None:
         """Play the feeder's call-to-eat audio."""

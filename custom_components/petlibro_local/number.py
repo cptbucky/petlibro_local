@@ -7,6 +7,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
+from .const import CAP_DISPENSE_PORTIONS
 from .entity import PetlibroEntity
 from .coordinator import PetlibroCoordinator
 
@@ -16,10 +17,12 @@ async def async_setup_entry(
 ) -> None:
     """Set up Petlibro number entities."""
     coordinator: PetlibroCoordinator = entry.runtime_data
-    async_add_entities([
-        PetlibroDispensePortions(coordinator),
-        PetlibroVolume(coordinator),
-    ])
+    entities: list[NumberEntity] = [PetlibroVolume(coordinator)]
+    # A wet feeder has no quantity - it serves a plate for a duration - so a
+    # portions slider would be meaningless on it.
+    if coordinator.device.supports(CAP_DISPENSE_PORTIONS):
+        entities.append(PetlibroDispensePortions(coordinator))
+    async_add_entities(entities)
 
 
 class PetlibroDispensePortions(PetlibroEntity, NumberEntity):

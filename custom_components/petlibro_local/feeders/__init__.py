@@ -48,9 +48,11 @@ class FeederProfile(Protocol):
         """Command handlers this model adds to the shared set."""
         ...
 
-    async def dispense(self, device: Any, **kwargs: Any) -> None:
-        """Feed now. Arguments are model-specific by design."""
-        ...
+    # Feeding is deliberately NOT part of this protocol. An auger feeder
+    # dispenses a quantity; a wet feeder runs a plate/door sequence with no
+    # quantity at all, and the two need different state as well as different
+    # arguments. Each profile exposes its own verb - DryFeeder.dispense(),
+    # WetFeeder.serve_plate() - and entity platforms select by capability.
 
 
 def _registry() -> list[FeederProfile]:

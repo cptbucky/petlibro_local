@@ -18,6 +18,7 @@ from homeassistant.const import (
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
+from .const import CAP_DISPENSE_PORTIONS, CAP_PLATE
 from .entity import PetlibroEntity
 from .coordinator import PetlibroCoordinator
 
@@ -32,15 +33,12 @@ async def async_setup_entry(
 ) -> None:
     """Set up Petlibro sensors."""
     coordinator: PetlibroCoordinator = entry.runtime_data
-    async_add_entities([
+    device = coordinator.device
+
+    entities: list[SensorEntity] = [
         PetlibroBatterySensor(coordinator),
         PetlibroWifiRssiSensor(coordinator),
-        PetlibroMotorStateSensor(coordinator),
         PetlibroVolumeSensor(coordinator),
-        PetlibroGrainOutputTypeSensor(coordinator),
-        PetlibroActualGrainSensor(coordinator),
-        PetlibroExpectedGrainSensor(coordinator),
-        PetlibroGrainExecStepSensor(coordinator),
         PetlibroErrorCodeSensor(coordinator),
         PetlibroFirmwareVersionSensor(coordinator),
         PetlibroPowerModeSensor(coordinator),
@@ -48,7 +46,83 @@ async def async_setup_entry(
         PetlibroSdCardCapacitySensor(coordinator),
         PetlibroSdCardUsedSensor(coordinator),
         PetlibroFeedingScheduleSensor(coordinator),
-    ])
+    ]
+
+    # Auger-only: a wet feeder reports no grain attributes at all.
+    if device.supports(CAP_DISPENSE_PORTIONS):
+        entities += [
+            PetlibroMotorStateSensor(coordinator),
+            PetlibroGrainOutputTypeSensor(coordinator),
+            PetlibroActualGrainSensor(coordinator),
+            PetlibroExpectedGrainSensor(coordinator),
+            PetlibroGrainExecStepSensor(coordinator),
+        ]
+
+    # Plate feeders: position, feeding phase, and the homing diagnostic.
+    if device.supports(CAP_PLATE):
+        entities += [
+            PetlibroPlatePositionSensor(coordinator),
+            PetlibroFeedingStepSensor(coordinator),
+            PetlibroPlateHomingSensor(coordinator),
+        ]
+
+    async_add_entities(entities)
+
+
+class PetlibroPlatePositionSensor(PetlibroEntity, SensorEntity):
+    """Which plate of the carousel is currently in position."""
+
+    _attr_name = "Plate Position"
+    _attr_icon = "mdi:rotate-right"
+
+    @property
+    def unique_id(self) -> str:
+        return f"{self._device.serial}_plate_position"
+
+    @property
+    def native_value(self):
+        return self._device.state.get("plate_position")
+
+
+class PetlibroFeedingStepSensor(PetlibroEntity, SensorEntity):
+    """Current phase of a feed cycle.
+
+    A wet feed is not instantaneous: the device pauses refrigeration, rotates
+    the plate and opens the door, reporting GRAIN_THAW, GRAIN_START, OPEN_DOOR
+    then GRAIN_END as it goes.
+    """
+
+    _attr_name = "Feeding Step"
+    _attr_icon = "mdi:progress-clock"
+
+    @property
+    def unique_id(self) -> str:
+        return f"{self._device.serial}_feeding_step"
+
+    @property
+    def native_value(self):
+        return self._device.state.get("wet_exec_step")
+
+
+class PetlibroPlateHomingSensor(PetlibroEntity, SensorEntity):
+    """Plate homing result (zeroState).
+
+    Worth surfacing: the firmware silently declines to actuate unless this
+    reads SUCCESS, so a jammed or misseated plate otherwise presents only as a
+    feed that never happens and an app that times out with no explanation.
+    """
+
+    _attr_name = "Plate Homing"
+    _attr_icon = "mdi:target"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    @property
+    def unique_id(self) -> str:
+        return f"{self._device.serial}_plate_homing"
+
+    @property
+    def native_value(self):
+        return self._device.state.get("zero_state")
 
 
 class PetlibroBatterySensor(PetlibroEntity, SensorEntity):

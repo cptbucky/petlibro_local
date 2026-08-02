@@ -55,6 +55,8 @@ class WetFeeder:
     PRODUCT_IDS = frozenset({"PLAF109"})
     MODEL_NAME = "Polar Wet Food Feeder"
     FIELDS = WET_FIELDS
+    #: Physical carousel plates. Bounds the Serve Plate entities.
+    PLATE_COUNT = 3
     CAPABILITIES = frozenset({
         CAP_DISPENSE_PLATE,
         CAP_PLATE,
@@ -72,14 +74,29 @@ class WetFeeder:
             CMD_DEVICE_LOG_REPORT_EVENT: _handle_log_report,
         }
 
-    async def dispense(self, device: Any, plan_id: int | None = None, **_: Any) -> None:
-        """Feed now by referencing a plan."""
-        plan_id = plan_id if plan_id is not None else _default_plan_id(device)
-        if plan_id is None:
+    async def serve_plate(self, device: Any, plate: int) -> None:
+        """Serve one of the carousel's plates.
+
+        Deliberately not named `dispense`: this is not an auger turning N
+        times. The firmware runs a multi-second sequence - pause refrigeration,
+        rotate to the plate, open the door - and reports progress through
+        WET_GRAIN_OUTPUT_EVENT.execStep (GRAIN_THAW, GRAIN_START, OPEN_DOOR,
+        GRAIN_END). No quantity appears anywhere in it.
+        """
+        if not 1 <= plate <= self.PLATE_COUNT:
             _LOGGER.error(
-                "Device %s: wet feeders feed by referencing a plan and none is "
-                "known. Create a feeding plan before feeding manually.",
-                device.serial,
+                "Device %s: plate %s out of range (1-%s)",
+                device.serial, plate, self.PLATE_COUNT,
+            )
+            return
+
+        plan = _plan_for_plate(device, plate)
+        if plan is None:
+            _LOGGER.error(
+                "Device %s: no feeding plan covers plate %s. The feed command "
+                "references a plan and the device reads the plate from it, so "
+                "a plan for this plate must exist before it can be served.",
+                device.serial, plate,
             )
             return
 
@@ -92,25 +109,25 @@ class WetFeeder:
                 device.state.get("zero_state"),
             )
 
-        duration = _duration_for(device, plan_id)
+        duration = int(plan.get("feedingDuration") or DEFAULT_WET_FEEDING_DURATION)
         await device._publish(
-            device.topics.service_sub, build_wet_feed_now(plan_id, duration)
+            device.topics.service_sub,
+            build_wet_feed_now(int(plan["planId"]), duration),
         )
 
 
-def _default_plan_id(device: Any) -> int | None:
-    for plan in device.feeding_plans:
-        if plan.get("planId") is not None:
-            return int(plan["planId"])
-    last = device.state.get("plan_id")
-    return int(last) if last is not None else None
+def _plan_for_plate(device: Any, plate: int) -> dict | None:
+    """Find the plan that owns a plate.
 
-
-def _duration_for(device: Any, plan_id: int) -> int:
+    WET_FOOD_FEED_NOW_SERVICE takes a planId, not a plate number - the device
+    reads the plate off the referenced plan. Every capture available showed
+    plate 1 only, so the mapping for plates 2 and 3 follows from that structure
+    rather than from direct observation.
+    """
     for plan in device.feeding_plans:
-        if plan.get("planId") == plan_id and plan.get("feedingDuration"):
-            return int(plan["feedingDuration"])
-    return int(device.state.get("feeding_duration") or DEFAULT_WET_FEEDING_DURATION)
+        if plan.get("plate") == plate and plan.get("planId") is not None:
+            return plan
+    return None
 
 
 async def _handle_wet_output(device: Any, payload: dict) -> None:
@@ -150,4 +167,4 @@ async def _handle_log_report(device: Any, payload: dict) -> None:
 # feeder that accepts commands but never actuates.
 POLL_ATTRS = ["zeroState", "platePosition"]
 
-__all__ = ["WetFeeder", "POLL_ATTRS", "CMD_ATTR_PUSH_EVENT"]
+__all__ = ["WetFeeder", "POLL_ATTRS"]
