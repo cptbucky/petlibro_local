@@ -231,6 +231,20 @@ def test_wet_plan_id_does_not_collide_with_the_auger_meaning():
     assert "grain_plan_id" not in f.device.state
 
 
+def test_pet_presence_tracks_approach_and_departure():
+    f = Feeder(WET)
+    f.receive(cmd="PET_DETECT_EVENT", msgId="p1", type="NEAR")
+    assert f.device.state["pet_present"] is True
+    f.receive(cmd="PET_DETECT_EVENT", msgId="p2", type="LEAVE")
+    assert f.device.state["pet_present"] is False
+
+
+def test_infrared_state_is_recorded():
+    f = Feeder(WET)
+    f.receive(cmd="MACHINE_INFRARED_EVENT", msgId="i1", irState=True)
+    assert f.device.state["ir_state"] is True
+
+
 # --- regression: the config request storm ----------------------------------
 
 

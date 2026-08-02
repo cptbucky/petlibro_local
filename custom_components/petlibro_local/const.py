@@ -86,6 +86,11 @@ CMD_GET_SOME_ATTR_SERVICE = "GET_SOME_ATTR_SERVICE"
 CMD_DEVICE_FUNCTION_TEST_SERVICE = "DEVICE_FUNCTION_TEST_SERVICE"
 CMD_DEVICE_CONFIG_SYNC = "DEVICE_CONFIG_SYNC"
 CMD_DEVICE_LOG_REPORT_EVENT = "DEVICE_LOG_REPORT_EVENT"
+# Pet presence, via the feeder's infrared sensor.
+CMD_PET_DETECT_EVENT = "PET_DETECT_EVENT"
+CMD_MACHINE_INFRARED_EVENT = "MACHINE_INFRARED_EVENT"
+PET_DETECT_NEAR = "NEAR"
+PET_DETECT_LEAVE = "LEAVE"
 
 # Feeding lifecycle, reported via WET_GRAIN_OUTPUT_EVENT.execStep
 EXEC_STEP_GRAIN_THAW = "GRAIN_THAW"
@@ -113,6 +118,7 @@ CAP_PLATE = "plate"                          # plate position / homing state
 CAP_AUDIO_TEST = "audio_test"                # can play call-to-eat audio
 CAP_FEEDING_PLANS = "feeding_plans"
 CAP_DETECTION = "detection"                  # camera models
+CAP_PET_PRESENCE = "pet_presence"            # infrared pet proximity sensor
 
 # Code response values
 CODE_OK = 0

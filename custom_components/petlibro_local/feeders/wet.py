@@ -39,6 +39,10 @@ from ..const import (
     CMD_WET_FOOD_FEED_NOW_SERVICE,
     CMD_WET_GRAIN_FEEDING_PLAN_SERVICE,
     CMD_WET_GRAIN_OUTPUT_EVENT,
+    CMD_PET_DETECT_EVENT,
+    CMD_MACHINE_INFRARED_EVENT,
+    CAP_PET_PRESENCE,
+    PET_DETECT_NEAR,
     DEFAULT_WET_FEEDING_DURATION,
     ZERO_STATE_SUCCESS,
 )
@@ -62,6 +66,7 @@ class WetFeeder:
         CAP_PLATE,
         CAP_AUDIO_TEST,
         CAP_FEEDING_PLANS,
+        CAP_PET_PRESENCE,
     })
 
     def handlers(self) -> dict[str, Any]:
@@ -72,6 +77,8 @@ class WetFeeder:
             CMD_GET_SOME_ATTR_SERVICE: _handle_some_attr_response,
             CMD_DEVICE_CONFIG_SYNC: _handle_config_sync,
             CMD_DEVICE_LOG_REPORT_EVENT: _handle_log_report,
+            CMD_PET_DETECT_EVENT: _handle_pet_detect,
+            CMD_MACHINE_INFRARED_EVENT: _handle_infrared,
         }
 
     async def serve_plate(self, device: Any, plate: int) -> None:
@@ -120,9 +127,13 @@ def _plan_for_plate(device: Any, plate: int) -> dict | None:
     """Find the plan that owns a plate.
 
     WET_FOOD_FEED_NOW_SERVICE takes a planId, not a plate number - the device
-    reads the plate off the referenced plan. Every capture available showed
-    plate 1 only, so the mapping for plates 2 and 3 follows from that structure
-    rather than from direct observation.
+    reads the plate off the referenced plan. Confirmed against vendor traffic
+    carrying two plans at once: planId 44142243 -> plate 1 and planId 44142244
+    -> plate 3, each with its own execution time and duration.
+
+    Note the vendor replaces the whole plan list on every edit (an empty
+    "plans":[] push immediately followed by the new set), so plans are a set to
+    be pushed wholesale rather than patched individually.
     """
     for plan in device.feeding_plans:
         if plan.get("plate") == plate and plan.get("planId") is not None:
@@ -150,6 +161,19 @@ async def _handle_plan_response(device: Any, payload: dict) -> None:
 
 async def _handle_some_attr_response(device: Any, payload: dict) -> None:
     """Response to a targeted attribute read (e.g. zeroState)."""
+    await merge_state(device, payload, WET_FIELDS)
+
+
+async def _handle_pet_detect(device: Any, payload: dict) -> None:
+    """Pet approached or left the bowl, per the infrared sensor."""
+    await ack_event(device, CMD_PET_DETECT_EVENT, payload)
+    device.state["pet_present"] = payload.get("type") == PET_DETECT_NEAR
+    await merge_state(device, payload, WET_FIELDS)
+
+
+async def _handle_infrared(device: Any, payload: dict) -> None:
+    """Raw infrared beam state, the signal behind PET_DETECT_EVENT."""
+    await ack_event(device, CMD_MACHINE_INFRARED_EVENT, payload)
     await merge_state(device, payload, WET_FIELDS)
 
 

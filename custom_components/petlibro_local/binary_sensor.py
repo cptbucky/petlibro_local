@@ -11,6 +11,7 @@ from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
+from .const import CAP_DISPENSE_PORTIONS, CAP_PET_PRESENCE, CAP_PLATE
 from .entity import PetlibroEntity
 from .coordinator import PetlibroCoordinator
 
@@ -20,11 +21,63 @@ async def async_setup_entry(
 ) -> None:
     """Set up Petlibro binary sensors."""
     coordinator: PetlibroCoordinator = entry.runtime_data
-    async_add_entities([
-        PetlibroOnlineSensor(coordinator),
-        PetlibroFoodLevelSensor(coordinator),
-        PetlibroGrainOutletSensor(coordinator),
-    ])
+    device = coordinator.device
+
+    entities: list[BinarySensorEntity] = [PetlibroOnlineSensor(coordinator)]
+
+    # Hopper level and outlet are auger concepts; a plate feeder has neither.
+    if device.supports(CAP_DISPENSE_PORTIONS):
+        entities += [
+            PetlibroFoodLevelSensor(coordinator),
+            PetlibroGrainOutletSensor(coordinator),
+        ]
+
+    if device.supports(CAP_PET_PRESENCE):
+        entities.append(PetlibroPetPresenceSensor(coordinator))
+
+    if device.supports(CAP_PLATE):
+        entities.append(PetlibroPlateJammedSensor(coordinator))
+
+    async_add_entities(entities)
+
+
+class PetlibroPetPresenceSensor(PetlibroEntity, BinarySensorEntity):
+    """Whether a pet is at the bowl, per the feeder's infrared sensor."""
+
+    _attr_name = "Pet Present"
+    _attr_device_class = BinarySensorDeviceClass.PRESENCE
+    _attr_icon = "mdi:cat"
+
+    @property
+    def unique_id(self) -> str:
+        return f"{self._device.serial}_pet_present"
+
+    @property
+    def is_on(self) -> bool | None:
+        return self._device.state.get("pet_present")
+
+
+class PetlibroPlateJammedSensor(PetlibroEntity, BinarySensorEntity):
+    """Plate failed to reach its home position.
+
+    The firmware declines to actuate while this is true, so without it a jam
+    presents only as a feed that silently never happens.
+    """
+
+    _attr_name = "Plate Jammed"
+    _attr_device_class = BinarySensorDeviceClass.PROBLEM
+    _attr_icon = "mdi:alert-circle"
+
+    @property
+    def unique_id(self) -> str:
+        return f"{self._device.serial}_plate_jammed"
+
+    @property
+    def is_on(self) -> bool | None:
+        zero_state = self._device.state.get("zero_state")
+        if zero_state is None:
+            return None
+        return zero_state == "TIMEOUT"
 
 
 class PetlibroOnlineSensor(PetlibroEntity, BinarySensorEntity):

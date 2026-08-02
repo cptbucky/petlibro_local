@@ -164,6 +164,10 @@ WET_FIELDS = {
     "ringerInterval": "ringer_interval",
     "ringerDuration": "ringer_duration",
     "temperatureCheckSwitch": "temperature_check_switch",
+    # Pet proximity. "type" also exists in the auger event map with a
+    # different meaning, which is why per-model maps take precedence.
+    "type": "pet_detect_type",
+    "irState": "ir_state",
 }
 
 # Feeding plan fields (within plan objects)
