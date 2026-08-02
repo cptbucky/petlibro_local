@@ -5,10 +5,12 @@ from __future__ import annotations
 from homeassistant.components.button import ButtonEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import EntityCategory
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import CAP_AUDIO_TEST, CAP_DISPENSE_PLATE, CAP_DISPENSE_PORTIONS
+from .exceptions import PetlibroError
 from .entity import PetlibroEntity
 from .coordinator import PetlibroCoordinator
 
@@ -78,7 +80,12 @@ class PetlibroServePlateButton(PetlibroEntity, ButtonEntity):
         return f"{self._device.serial}_serve_plate_{self._plate}"
 
     async def async_press(self) -> None:
-        await self._device.serve_plate(self._plate)
+        try:
+            await self._device.serve_plate(self._plate)
+        except PetlibroError as err:
+            # Surfaces as a toast. Logging alone would leave the press looking
+            # successful while nothing happened.
+            raise HomeAssistantError(str(err)) from err
 
 
 class PetlibroRingBellButton(PetlibroEntity, ButtonEntity):

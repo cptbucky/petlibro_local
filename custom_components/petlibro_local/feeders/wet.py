@@ -63,6 +63,7 @@ from ..const import (
     ZERO_STATE_SUCCESS,
 )
 from ..protocol.codec import build_wet_feed_now, build_wet_feeding_plan
+from ..exceptions import NoPlanForPlate, PlateNotHomed
 from ..protocol.messages import WET_FIELDS
 from .common import ack_event, merge_state, warn_if_failed
 
@@ -120,22 +121,16 @@ class WetFeeder:
 
         plan = _plan_for_plate(device, plate)
         if plan is None:
-            _LOGGER.error(
-                "Device %s: no feeding plan covers plate %s. The feed command "
-                "references a plan and the device reads the plate from it, so "
-                "a plan for this plate must exist before it can be served.",
-                device.serial, plate,
-            )
-            return
+            known = [
+                p["plate"] for p in device.feeding_plans if p.get("plate") is not None
+            ]
+            raise NoPlanForPlate(plate, known)
 
-        if device.state.get("zero_state") != ZERO_STATE_SUCCESS:
-            _LOGGER.warning(
-                "Device %s: plate not homed (zeroState=%s). The feeder will "
-                "accept this command and do nothing - check for a jam or "
-                "reseat the plate.",
-                device.serial,
-                device.state.get("zero_state"),
-            )
+        zero_state = device.state.get("zero_state")
+        # Only refuse on a known-bad state. zero_state is None until the device
+        # reports one, and refusing then would block a feed that would work.
+        if zero_state is not None and zero_state != ZERO_STATE_SUCCESS:
+            raise PlateNotHomed(zero_state)
 
         duration = int(plan.get("feedingDuration") or DEFAULT_WET_FEEDING_DURATION)
         await device._publish(
@@ -170,7 +165,13 @@ async def _handle_wet_output(device: Any, payload: dict) -> None:
 
 
 async def _handle_feed_now_response(device: Any, payload: dict) -> None:
-    if payload.get("code") == CODE_ERROR_PLAN_NOT_FOUND:
+    code = payload.get("code")
+    if code not in (None, 0):
+        _LOGGER.warning(
+            "Device %s did not accept the feed (code=%s, planId=%s)",
+            device.serial, code, payload.get("planId"),
+        )
+    if code == CODE_ERROR_PLAN_NOT_FOUND:
         # Worth its own message: the generic "code=2050" tells a user nothing,
         # and the cause is specific and fixable.
         _LOGGER.error(

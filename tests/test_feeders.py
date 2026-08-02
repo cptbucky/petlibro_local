@@ -120,11 +120,41 @@ def test_wet_feeder_never_sends_the_auger_command():
 
 def test_wet_feeder_refuses_a_plate_with_no_plan():
     """Feeding takes the plate from a plan, so with no plan for that plate
-    there is nothing coherent to send."""
+    there is nothing coherent to send - and the user must be told, not left
+    with a press that looks successful."""
+    from custom_components.petlibro_local.exceptions import NoPlanForPlate
+
     f = Feeder(WET)
     f.device.feeding_plans = [PLANS[0]]
-    f.run(f.device.serve_plate(2))
+    with pytest.raises(NoPlanForPlate) as excinfo:
+        f.run(f.device.serve_plate(2))
     assert f.sent == []
+    # the message must name the plate and what is actually available
+    assert "plate 2" in str(excinfo.value)
+    assert "1" in str(excinfo.value)
+
+
+def test_not_homed_plate_refuses_with_an_explanation():
+    """The firmware accepts a feed while unhomed and silently does nothing, so
+    the integration refuses rather than letting the press appear to work."""
+    from custom_components.petlibro_local.exceptions import PlateNotHomed
+
+    f = Feeder(WET)
+    f.device.feeding_plans = list(PLANS)
+    f.device.state["zero_state"] = "TIMEOUT"
+    with pytest.raises(PlateNotHomed):
+        f.run(f.device.serve_plate(1))
+    assert f.sent == []
+
+
+def test_unknown_homing_state_does_not_block_a_feed():
+    """zero_state is None until the device reports one; refusing then would
+    block feeds that would have worked."""
+    f = Feeder(WET)
+    f.device.feeding_plans = list(PLANS)
+    assert f.device.state.get("zero_state") is None
+    f.run(f.device.serve_plate(1))
+    assert f.last()[1]["cmd"] == "WET_FOOD_FEED_NOW_SERVICE"
 
 
 @pytest.mark.parametrize("plate", [0, 4, -1])
