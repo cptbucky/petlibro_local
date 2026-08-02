@@ -274,3 +274,19 @@ def test_targeted_attribute_read():
     _, msg = f.last()
     assert msg["cmd"] == "GET_SOME_ATTR_SERVICE"
     assert msg["attrKeys"] == ["zeroState"]
+
+
+# --- schedule sensor describes the feeder to the UI -------------------------
+
+
+def test_schedule_sensor_attributes_describe_the_feeder():
+    """The Lovelace card branches on these rather than on model numbers, so a
+    plate feeder must advertise itself and its plate count."""
+    from custom_components.petlibro_local.feeders import get_profile
+
+    wet, dry = get_profile(WET), get_profile(DRY)
+    assert const.CAP_DISPENSE_PLATE in wet.CAPABILITIES
+    assert wet.PLATE_COUNT == 3
+    assert const.CAP_DISPENSE_PLATE not in dry.CAPABILITIES
+    # A dry profile must not be asked for a plate count it does not have.
+    assert getattr(dry, "PLATE_COUNT", None) is None

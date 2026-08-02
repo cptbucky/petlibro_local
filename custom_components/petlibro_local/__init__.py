@@ -13,7 +13,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.helpers import device_registry as dr
 
-from .const import CONF_FEEDING_PLANS, DOMAIN, PLATFORMS
+from .const import CAP_DISPENSE_PLATE, CONF_FEEDING_PLANS, DOMAIN, PLATFORMS
 from .coordinator import PetlibroCoordinator
 from .protocol.codec import timestamp_now_ms
 
@@ -111,7 +111,7 @@ def _register_services(hass: HomeAssistant) -> None:
         coordinator = _get_coordinator(hass, call)
         plan_id = call.data["plan_id"]
         time_val = call.data["time"]
-        portions = call.data["portions"]
+        portions = call.data.get("portions", 1)
         days = call.data.get("days", [])
         enable_audio = call.data.get("enable_audio", True)
 
@@ -142,9 +142,28 @@ def _register_services(hass: HomeAssistant) -> None:
             "repeatDay": repeat_day,
             "enableAudio": enable_audio,
             "audioTimes": 3,
-            "grainNum": portions,
             "syncTime": timestamp_now_ms(),
         }
+
+        # The amount a plan carries is model-specific: an auger dispenses a
+        # quantity, a plate feeder rotates to a plate and holds the door open.
+        # Gated on capability so an untested model keeps the auger default.
+        if coordinator.device.supports(CAP_DISPENSE_PLATE):
+            plate = int(call.data.get("plate", 1))
+            plate_count = getattr(coordinator.device.profile, "PLATE_COUNT", 3)
+            if not 1 <= plate <= plate_count:
+                _LOGGER.error(
+                    "Plate %s is out of range (1-%s); plan not set", plate, plate_count
+                )
+                return
+            plan["plate"] = plate
+            plan["feedingDuration"] = int(call.data.get("duration", 210))
+            # The device stores an absolute date, so a plan needs a next
+            # occurrence. Whether the firmware advances this itself is
+            # unconfirmed - see docs/plaf109-protocol.md.
+            plan["executionDay"] = datetime.date.today().isoformat()
+        else:
+            plan["grainNum"] = portions
 
         # Store locally
         existing = [p for p in coordinator.device.feeding_plans if p.get("planId") != plan_id]

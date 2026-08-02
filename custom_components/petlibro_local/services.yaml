@@ -7,8 +7,8 @@ manual_feed:
   fields:
     portions:
       name: Portions
-      description: Number of portions to dispense
-      required: true
+      description: Number of portions to dispense (auger feeders only)
+      required: false
       default: 1
       selector:
         number:
@@ -48,6 +48,27 @@ set_feeding_plan:
           min: 1
           max: 20
           step: 1
+    plate:
+      name: Plate
+      description: Which carousel plate to serve (wet food feeders only)
+      required: false
+      default: 1
+      selector:
+        number:
+          min: 1
+          max: 3
+          step: 1
+    duration:
+      name: Open for
+      description: How long to hold the door open, in seconds (wet food feeders only)
+      required: false
+      default: 210
+      selector:
+        number:
+          min: 10
+          max: 900
+          step: 10
+          unit_of_measurement: s
     days:
       name: Days
       description: Days of the week (1=Mon, 7=Sun). Empty = every day.

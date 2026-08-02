@@ -18,7 +18,7 @@ from homeassistant.const import (
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from .const import CAP_DISPENSE_PORTIONS, CAP_PLATE
+from .const import CAP_DISPENSE_PLATE, CAP_DISPENSE_PORTIONS, CAP_PLATE
 from .entity import PetlibroEntity
 from .coordinator import PetlibroCoordinator
 
@@ -444,6 +444,15 @@ class PetlibroFeedingScheduleSensor(PetlibroEntity, SensorEntity):
             attrs[f"plan_{slot}_days"] = days
             attrs[f"plan_{slot}_audio"] = audio
 
+        # Describe the feeder so the Lovelace card can render the right control
+        # without knowing model numbers: a plate feeder schedules "which plate,
+        # open for how long", an auger feeder schedules "how many portions".
+        plate_feeder = self._device.supports(CAP_DISPENSE_PLATE)
+        attrs["feeder_type"] = "plate" if plate_feeder else "auger"
+        attrs["supports_plates"] = plate_feeder
+        if plate_feeder:
+            attrs["plate_count"] = getattr(self._device.profile, "PLATE_COUNT", 0)
+
         # Structured plan data for the Lovelace card
         attrs["plans"] = [
             {
@@ -451,9 +460,13 @@ class PetlibroFeedingScheduleSensor(PetlibroEntity, SensorEntity):
                 "time_utc": plan.get("executionTime", ""),
                 "time_local": _utc_to_local_24h(plan.get("executionTime", "")),
                 "time_display": _utc_to_local(plan.get("executionTime", "")),
-                "portions": plan.get("grainNum", 1),
                 "days": [d for d in plan.get("repeatDay", []) if d > 0],
                 "audio": plan.get("enableAudio", True),
+                # Only one of these is meaningful per model. Both keys are
+                # always present so the card never has to test for existence.
+                "portions": None if plate_feeder else plan.get("grainNum", 1),
+                "plate": plan.get("plate") if plate_feeder else None,
+                "duration": plan.get("feedingDuration") if plate_feeder else None,
             }
             for i, plan in enumerate(plans)
         ]

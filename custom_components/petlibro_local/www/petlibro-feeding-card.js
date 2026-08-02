@@ -69,6 +69,38 @@ class PetlibroFeedingCard extends HTMLElement {
     }
   }
 
+  // --- Feeder shape -------------------------------------------------------
+  // A plate feeder schedules "which plate, open for how long"; an auger feeder
+  // schedules "how many portions". The integration reports which this is, so
+  // the card never needs to know model numbers.
+
+  get _scheduleAttrs() {
+    return this._getState()?.attributes || {};
+  }
+
+  get _isPlateFeeder() {
+    return this._scheduleAttrs.supports_plates === true;
+  }
+
+  get _plateCount() {
+    return this._scheduleAttrs.plate_count || 3;
+  }
+
+  // Short label for a plan's amount, used in lists and calendar cells.
+  _amountLabel(plan) {
+    if (this._isPlateFeeder) {
+      const secs = plan.duration ? ` \u00b7 ${plan.duration}s` : '';
+      return `Plate ${plan.plate ?? '?'}${secs}`;
+    }
+    const n = plan.portions ?? 0;
+    return `${n} portion${n !== 1 ? 's' : ''}`;
+  }
+
+  // Compact form for tight spaces (calendar cells).
+  _amountShort(plan) {
+    return this._isPlateFeeder ? `P${plan.plate ?? '?'}` : `${plan.portions ?? 0}p`;
+  }
+
   async _callService(service, data = {}) {
     const deviceId = this._getDeviceId();
     try {
@@ -123,7 +155,10 @@ class PetlibroFeedingCard extends HTMLElement {
       const days = p.days || [];
       return days.length === 0 || days.includes(todayIso);
     });
-    const todayPortions = todaysFeeds.reduce((sum, p) => sum + (p.portions || 0), 0);
+    // Plate feeders have no quantity to total, so count servings instead.
+    const todayPortions = this._isPlateFeeder
+      ? todaysFeeds.length
+      : todaysFeeds.reduce((sum, p) => sum + (p.portions || 0), 0);
 
     this.shadowRoot.innerHTML = `
       ${this._styles()}
@@ -195,12 +230,12 @@ class PetlibroFeedingCard extends HTMLElement {
         rows += `
           <div class="cal-cell">
             <div class="cal-dot ${active ? 'active' : 'inactive'}"
-                 title="${active ? displayTime + ' - ' + plan.portions + ' portion(s)' : ''}">
-              ${active ? plan.portions : ''}
+                 title="${active ? displayTime + ' - ' + this._amountLabel(plan) : ''}">
+              ${active ? this._amountShort(plan) : ''}
             </div>
           </div>`;
       });
-      rows += `<div class="cal-portions">${plan.portions}p</div>`;
+      rows += `<div class="cal-portions">${this._amountShort(plan)}</div>`;
     });
 
     return `
@@ -260,7 +295,7 @@ class PetlibroFeedingCard extends HTMLElement {
             <div class="slot-main">
               <span class="slot-time">${displayTime}</span>
               <span class="dot-sep">\u00b7</span>
-              <span>${plan.portions} portion${plan.portions !== 1 ? 's' : ''}</span>
+              <span>${this._amountLabel(plan)}</span>
               ${plan.audio ? '<span class="dot-sep">\u00b7</span><span class="audio-badge">&#x1f50a;</span>' : ''}
             </div>
             <div class="slot-days">${dayBadges}</div>
@@ -294,6 +329,8 @@ class PetlibroFeedingCard extends HTMLElement {
     const d = this._editData;
     const time = d.time || existingPlan?.time_local || '08:00';
     const portions = d.portions ?? existingPlan?.portions ?? 1;
+    const plate = d.plate ?? existingPlan?.plate ?? 1;
+    const duration = d.duration ?? existingPlan?.duration ?? 210;
     const days = d.days || (existingPlan?.days?.length > 0 ? [...existingPlan.days] : [1,2,3,4,5,6,7]);
     const audio = d.audio ?? existingPlan?.audio ?? true;
 
@@ -316,7 +353,22 @@ class PetlibroFeedingCard extends HTMLElement {
             <input type="time" class="time-input" id="edit-time" value="${time}">
           </div>
 
-          <!-- Portions -->
+          <!-- Amount: plate + duration for plate feeders, portions for augers -->
+          ${this._isPlateFeeder ? `
+          <div class="edit-field">
+            <label class="edit-label">Plate</label>
+            <select id="edit-plate" class="time-input">
+              ${Array.from({length: this._plateCount}, (_, i) => i + 1).map(n =>
+                `<option value="${n}" ${n === plate ? 'selected' : ''}>Plate ${n}</option>`
+              ).join('')}
+            </select>
+          </div>
+          <div class="edit-field">
+            <label class="edit-label">Open for (seconds)</label>
+            <input type="number" class="time-input" id="edit-duration"
+                   min="10" max="900" step="10" value="${duration}">
+          </div>
+          ` : `
           <div class="edit-field">
             <label class="edit-label">Portions</label>
             <div class="spinner">
@@ -325,6 +377,7 @@ class PetlibroFeedingCard extends HTMLElement {
               <button class="spin-btn" data-action="portions-inc">+</button>
             </div>
           </div>
+          `}
 
           <!-- Days -->
           <div class="edit-field full">
@@ -394,6 +447,16 @@ class PetlibroFeedingCard extends HTMLElement {
                 <option value="10:00">10:00 AM</option>
               </select>
             </div>
+            ${this._isPlateFeeder ? `
+            <div class="qfield">
+              <label>Plate</label>
+              <select id="quick-plate">
+                ${Array.from({length: this._plateCount}, (_, i) => i + 1).map(n =>
+                  `<option value="${n}" ${n===1?'selected':''}>Plate ${n}</option>`
+                ).join('')}
+              </select>
+            </div>
+            ` : `
             <div class="qfield">
               <label>Portions</label>
               <select id="quick-portions">
@@ -402,6 +465,7 @@ class PetlibroFeedingCard extends HTMLElement {
                 ).join('')}
               </select>
             </div>
+            `}
             <div class="qfield">
               <label>Audio</label>
               <select id="quick-audio">
@@ -545,7 +609,15 @@ class PetlibroFeedingCard extends HTMLElement {
     const timeInput = this.shadowRoot.querySelector('#edit-time');
     if (timeInput) this._editData.time = timeInput.value;
 
-    const { time, portions, days, audio } = this._editData;
+    // Plate feeders carry no quantity; read their controls instead.
+    if (this._isPlateFeeder) {
+      const plateSel = this.shadowRoot.querySelector('#edit-plate');
+      const durInput = this.shadowRoot.querySelector('#edit-duration');
+      if (plateSel) this._editData.plate = parseInt(plateSel.value, 10);
+      if (durInput) this._editData.duration = parseInt(durInput.value, 10);
+    }
+
+    const { time, portions, days, audio, plate, duration } = this._editData;
     if (!time) {
       this._showToast('Please select a feeding time');
       return;
@@ -560,13 +632,19 @@ class PetlibroFeedingCard extends HTMLElement {
     this._editData = {};
     this._render();
 
-    await this._callService('set_feeding_plan', {
+    const payload = {
       plan_id: slot,
       time: time,
-      portions: portions || 1,
       days: days.length === 7 ? [] : days.map(String),
       enable_audio: audio ?? true,
-    });
+    };
+    if (this._isPlateFeeder) {
+      payload.plate = plate || 1;
+      payload.duration = duration || 210;
+    } else {
+      payload.portions = portions || 1;
+    }
+    await this._callService('set_feeding_plan', payload);
   }
 
   async _deleteSlot(slot) {
@@ -578,6 +656,7 @@ class PetlibroFeedingCard extends HTMLElement {
     const interval = parseInt(root.querySelector('#quick-interval')?.value || '8', 10);
     const startTime = root.querySelector('#quick-start')?.value || '08:00';
     const portions = parseInt(root.querySelector('#quick-portions')?.value || '1', 10);
+    const plate = parseInt(root.querySelector('#quick-plate')?.value || '1', 10);
     const audio = root.querySelector('#quick-audio')?.value === 'true';
 
     // Clear first
@@ -591,9 +670,9 @@ class PetlibroFeedingCard extends HTMLElement {
       await this._callService('set_feeding_plan', {
         plan_id: planId,
         time: `${String(hour).padStart(2, '0')}:00`,
-        portions,
         days: [],
         enable_audio: audio,
+        ...(this._isPlateFeeder ? { plate, duration: 210 } : { portions }),
       });
       planId++;
       hour += interval;
