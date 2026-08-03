@@ -89,8 +89,8 @@ class PetlibroFeedingCard extends HTMLElement {
   // Short label for a plan's amount, used in lists and calendar cells.
   _amountLabel(plan) {
     if (this._isPlateFeeder) {
-      const secs = plan.duration ? ` \u00b7 ${plan.duration}s` : '';
-      return `Plate ${plan.plate ?? '?'}${secs}`;
+      const mins = plan.duration ? ` \u00b7 ${Math.round(plan.duration / 60)}m` : '';
+      return `Plate ${plan.plate ?? '?'}${mins}`;
     }
     const n = plan.portions ?? 0;
     return `${n} portion${n !== 1 ? 's' : ''}`;
@@ -330,7 +330,9 @@ class PetlibroFeedingCard extends HTMLElement {
     const time = d.time || existingPlan?.time_local || '08:00';
     const portions = d.portions ?? existingPlan?.portions ?? 1;
     const plate = d.plate ?? existingPlan?.plate ?? 1;
-    const duration = d.duration ?? existingPlan?.duration ?? 210;
+    // plan.duration is seconds on the wire; the editor works in minutes.
+    const duration = d.duration
+      ?? (existingPlan?.duration ? Math.round(existingPlan.duration / 60) : 4);
     const days = d.days || (existingPlan?.days?.length > 0 ? [...existingPlan.days] : [1,2,3,4,5,6,7]);
     const audio = d.audio ?? existingPlan?.audio ?? true;
 
@@ -364,9 +366,9 @@ class PetlibroFeedingCard extends HTMLElement {
             </select>
           </div>
           <div class="edit-field">
-            <label class="edit-label">Open for (seconds)</label>
+            <label class="edit-label">Open for (minutes)</label>
             <input type="number" class="time-input" id="edit-duration"
-                   min="10" max="900" step="10" value="${duration}">
+                   min="1" max="240" step="1" value="${duration}">
           </div>
           ` : `
           <div class="edit-field">
@@ -651,7 +653,7 @@ class PetlibroFeedingCard extends HTMLElement {
     };
     if (this._isPlateFeeder) {
       payload.plate = plate || 1;
-      payload.duration = duration || 210;
+      payload.duration = duration || 4;
     } else {
       payload.portions = portions || 1;
     }
@@ -683,7 +685,7 @@ class PetlibroFeedingCard extends HTMLElement {
         time: `${String(hour).padStart(2, '0')}:00`,
         days: [],
         enable_audio: audio,
-        ...(this._isPlateFeeder ? { plate, duration: 210 } : { portions }),
+        ...(this._isPlateFeeder ? { plate, duration: 4 } : { portions }),
       });
       planId++;
       hour += interval;

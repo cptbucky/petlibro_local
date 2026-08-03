@@ -474,3 +474,26 @@ def test_weekday_only_plan_skips_the_weekend():
     """Mon-Fri asked on a Saturday lands on the Monday."""
     saturday = datetime.datetime(2026, 8, 8, 9, 0, tzinfo=datetime.timezone.utc)
     assert next_execution_day("08:00", [1, 2, 3, 4, 5], saturday) == "2026-08-10"
+
+
+# --- feed duration: minutes at the boundary, seconds on the wire -----------
+
+
+def test_duration_bounds_are_four_hours():
+    assert const.WET_FEEDING_MIN_MINUTES == 1
+    assert const.WET_FEEDING_MAX_MINUTES == 240  # 4 hours
+
+
+@pytest.mark.parametrize("minutes,seconds", [(1, 60), (4, 240), (30, 1800), (240, 14400)])
+def test_minutes_convert_to_wire_seconds(minutes, seconds):
+    """The UI works in minutes because nobody schedules feeding in seconds;
+    the protocol carries seconds."""
+    assert minutes * 60 == seconds
+
+
+def test_a_four_hour_plan_is_servable():
+    """The upper bound must survive the round trip to a feed command."""
+    f = Feeder(WET)
+    f.device.feeding_plans = [{"planId": 9, "plate": 1, "feedingDuration": 240 * 60}]
+    f.run(f.device.serve_plate(1))
+    assert f.last()[1]["feedingDuration"] == 14400

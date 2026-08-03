@@ -13,7 +13,14 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.helpers import device_registry as dr
 
-from .const import CAP_DISPENSE_PLATE, CONF_FEEDING_PLANS, DOMAIN, PLATFORMS
+from .const import (
+    CAP_DISPENSE_PLATE,
+    CONF_FEEDING_PLANS,
+    DOMAIN,
+    PLATFORMS,
+    WET_FEEDING_MAX_MINUTES,
+    WET_FEEDING_MIN_MINUTES,
+)
 from .coordinator import PetlibroCoordinator
 from .protocol.codec import timestamp_now_ms
 
@@ -157,7 +164,10 @@ def _register_services(hass: HomeAssistant) -> None:
                 )
                 return
             plan["plate"] = plate
-            plan["feedingDuration"] = int(call.data.get("duration", 210))
+            # Presented in minutes; the protocol carries seconds.
+            minutes = int(call.data.get("duration", 4))
+            minutes = max(WET_FEEDING_MIN_MINUTES, min(WET_FEEDING_MAX_MINUTES, minutes))
+            plan["feedingDuration"] = minutes * 60
             # The device stores an absolute date, so a plan needs a next
             # occurrence. Whether the firmware advances this itself is
             # unconfirmed - see docs/plaf109-protocol.md.

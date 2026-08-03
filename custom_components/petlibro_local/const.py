@@ -105,8 +105,11 @@ ZERO_STATE_PROCESSING = "PROCESSING"
 ZERO_STATE_SUCCESS = "SUCCESS"
 ZERO_STATE_TIMEOUT = "TIMEOUT"
 
-# Fallback feed duration (seconds) when a plan does not carry one.
-DEFAULT_WET_FEEDING_DURATION = 240
+# Feed duration. The wire format is seconds, but users think in minutes, so
+# every UI works in minutes and converts at the service boundary.
+DEFAULT_WET_FEEDING_DURATION = 240  # seconds
+WET_FEEDING_MIN_MINUTES = 1
+WET_FEEDING_MAX_MINUTES = 240  # 4 hours
 
 # --- Capabilities ---
 # Entity platforms gate on these rather than on product id, so an untested
