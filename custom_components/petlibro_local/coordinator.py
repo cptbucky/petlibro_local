@@ -9,9 +9,11 @@ from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers.event import async_track_time_change
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 
 from .const import (
+    CAP_FEEDING_PLANS,
     CONF_PRODUCT_ID,
     CONF_SERIAL,
     DOMAIN,
@@ -74,11 +76,33 @@ class PetlibroCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         )
         self._unsubscribe.append(unsub)
 
+        # The device ignores repeatDay and will not run a plan whose
+        # executionDay has passed, so a schedule left alone dies overnight.
+        # Re-push daily to advance every plan to its next occurrence.
+        if self.device.supports(CAP_FEEDING_PLANS):
+            self._unsubscribe.append(
+                async_track_time_change(
+                    self.hass,
+                    self._async_refresh_plan_dates,
+                    hour=0, minute=5, second=0,
+                )
+            )
+
         # Start device heartbeat watchdog
         await self.device.start()
 
         # Set initial data
         self.async_set_updated_data(self.device.state)
+
+    async def _async_refresh_plan_dates(self, _now) -> None:
+        """Re-push plans so their executionDay advances past midnight."""
+        if not self.device.feeding_plans:
+            return
+        _LOGGER.debug(
+            "Refreshing plan dates for %s (%d plan(s))",
+            self._serial, len(self.device.feeding_plans),
+        )
+        await self.device.set_feeding_plans(self.device.feeding_plans)
 
     @callback
     def _on_mqtt_message(self, msg) -> None:

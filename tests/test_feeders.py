@@ -387,3 +387,90 @@ def test_learning_the_same_product_id_is_a_no_op():
     before = f.device.profile
     f.device.set_product_id(WET)
     assert f.device.profile is before
+
+
+# --- executionDay: the device ignores repeatDay ----------------------------
+# Three plans carrying repeatDay [1..7] failed to fire the day after they were
+# created, because the device gates on executionDay and that date had passed.
+
+import datetime  # noqa: E402
+
+from custom_components.petlibro_local.feeders.wet import (  # noqa: E402
+    next_execution_day,
+    refresh_execution_days,
+)
+
+MON_0900 = datetime.datetime(2026, 8, 3, 9, 0, tzinfo=datetime.timezone.utc)
+
+
+def test_time_already_passed_today_rolls_to_tomorrow():
+    assert next_execution_day("08:00", [1, 2, 3, 4, 5, 6, 7], MON_0900) == "2026-08-04"
+
+
+def test_time_still_to_come_stays_today():
+    assert next_execution_day("17:00", [1, 2, 3, 4, 5, 6, 7], MON_0900) == "2026-08-03"
+
+
+def test_weekday_restriction_is_respected():
+    """Sunday-only, asked on a Monday, lands on the coming Sunday."""
+    assert next_execution_day("17:00", [7, 0, 0, 0, 0, 0, 0], MON_0900) == "2026-08-09"
+
+
+def test_empty_repeat_is_treated_as_daily():
+    assert next_execution_day("17:00", [], MON_0900) == "2026-08-03"
+
+
+def test_refresh_advances_a_stale_plan():
+    """The exact failure seen in the field: a plan dated yesterday never runs
+    again, however permissive its repeatDay."""
+    stale = [{"planId": 1, "plate": 1, "executionTime": "08:00",
+              "executionDay": "2026-08-02", "repeatDay": [1, 2, 3, 4, 5, 6, 7]}]
+    refreshed = refresh_execution_days(stale)
+    assert refreshed[0]["executionDay"] != "2026-08-02"
+    # everything else is preserved, and the input is not mutated
+    assert refreshed[0]["plate"] == 1
+    assert stale[0]["executionDay"] == "2026-08-02"
+
+
+def test_pushing_plans_refreshes_their_dates():
+    """A push must never send a date already in the past."""
+    f = Feeder(WET)
+    today = datetime.date.today().isoformat()
+    f.run(f.device.set_feeding_plans([
+        {"planId": 1, "plate": 1, "executionTime": "23:59",
+         "executionDay": "2020-01-01", "repeatDay": [1, 2, 3, 4, 5, 6, 7]}
+    ]))
+    _, msg = f.last()
+    assert msg["cmd"] == "WET_GRAIN_FEEDING_PLAN_SERVICE"
+    assert msg["plans"][0]["executionDay"] >= today
+
+
+@pytest.mark.parametrize("day_offset", range(8))
+def test_a_weekly_plan_never_drifts_onto_another_weekday(day_offset):
+    """The daily refresh re-pushes every plan, so it must not walk a weekly
+    plan forward onto whatever day it happens to run.
+
+    A Sunday-only plan refreshed on any day of the week must still land on a
+    Sunday - never the Monday the job happened to run on.
+    """
+    now = MON_0900 + datetime.timedelta(days=day_offset)
+    got = next_execution_day("17:00", [7, 0, 0, 0, 0, 0, 0], now)
+    assert datetime.date.fromisoformat(got).isoweekday() == 7
+    assert datetime.date.fromisoformat(got) >= now.date()
+
+
+def test_a_weekly_plan_stays_today_until_its_time_passes():
+    """On the day itself it must not skip a week just because the refresh ran."""
+    sunday_morning = datetime.datetime(2026, 8, 9, 9, 0, tzinfo=datetime.timezone.utc)
+    assert next_execution_day("17:00", [7], sunday_morning) == "2026-08-09"
+
+
+def test_a_weekly_plan_rolls_a_full_week_once_its_time_passes():
+    sunday_evening = datetime.datetime(2026, 8, 9, 18, 0, tzinfo=datetime.timezone.utc)
+    assert next_execution_day("17:00", [7], sunday_evening) == "2026-08-16"
+
+
+def test_weekday_only_plan_skips_the_weekend():
+    """Mon-Fri asked on a Saturday lands on the Monday."""
+    saturday = datetime.datetime(2026, 8, 8, 9, 0, tzinfo=datetime.timezone.utc)
+    assert next_execution_day("08:00", [1, 2, 3, 4, 5], saturday) == "2026-08-10"

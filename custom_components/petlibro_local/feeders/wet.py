@@ -39,6 +39,7 @@ merge with, or borrow from, plans created by the vendor cloud.
 
 from __future__ import annotations
 
+import datetime
 import logging
 from typing import Any
 
@@ -88,8 +89,12 @@ class WetFeeder:
 
     def build_plans(self, plans: list[dict]) -> str:
         """A wet feeder uses its own plan command; the auger one is dropped
-        silently by the firmware, so plans would never reach the device."""
-        return build_wet_feeding_plan(plans)
+        silently by the firmware, so plans would never reach the device.
+
+        Dates are recomputed on every push: the device ignores repeatDay and
+        will not run a plan whose executionDay has passed.
+        """
+        return build_wet_feeding_plan(refresh_execution_days(plans))
 
     def handlers(self) -> dict[str, Any]:
         return {
@@ -137,6 +142,59 @@ class WetFeeder:
             device.topics.service_sub,
             build_wet_feed_now(int(plan["planId"]), duration),
         )
+
+
+def next_execution_day(
+    execution_time: str,
+    repeat_day: list[int] | None,
+    now: datetime.datetime | None = None,
+) -> str:
+    """Date on which a plan should next run, as YYYY-MM-DD.
+
+    The device treats executionDay as an absolute date and ignores repeatDay:
+    a plan whose date has passed simply never runs again. Confirmed by three
+    plans carrying repeatDay [1..7] failing to fire the following day.
+
+    The vendor cloud worked around this by re-pushing the same planId with an
+    advanced date (optCode PLATE_POSTPONE), so a local integration has to do
+    the same. This computes the next date matching the requested weekdays whose
+    time has not already passed.
+
+    `execution_time` and `now` are both UTC, matching the stored plan.
+    """
+    now = now or datetime.datetime.now(datetime.timezone.utc)
+    try:
+        hh, mm = (int(x) for x in execution_time.split(":")[:2])
+    except (ValueError, AttributeError):
+        hh, mm = 0, 0
+
+    active = {d for d in (repeat_day or []) if 1 <= d <= 7} or set(range(1, 8))
+
+    for offset in range(8):
+        day = now.date() + datetime.timedelta(days=offset)
+        if day.isoweekday() not in active:
+            continue
+        if offset == 0 and (hh, mm) <= (now.hour, now.minute):
+            continue  # already passed today
+        return day.isoformat()
+    return (now.date() + datetime.timedelta(days=1)).isoformat()
+
+
+def refresh_execution_days(plans: list[dict]) -> list[dict]:
+    """Advance every plan to its next occurrence.
+
+    Called before each push and once a day, because a plan left on a past date
+    is dead rather than merely late.
+    """
+    out = []
+    for plan in plans:
+        p = dict(plan)
+        if p.get("executionTime"):
+            p["executionDay"] = next_execution_day(
+                p["executionTime"], p.get("repeatDay")
+            )
+        out.append(p)
+    return out
 
 
 def _plan_for_plate(device: Any, plate: int) -> dict | None:

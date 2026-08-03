@@ -1280,12 +1280,38 @@ class PetlibroFeedingCardEditor extends HTMLElement {
 
   setConfig(config) {
     this._config = { ...config };
-    this._render();
+    // Do NOT re-render here. Lovelace calls setConfig back after every
+    // config-changed we emit, and rebuilding the DOM mid-keystroke destroys
+    // the focused input - the caret jumps out of the title field on each
+    // character typed.
+    this._sync();
   }
 
   set hass(hass) {
+    const first = !this._hass;
     this._hass = hass;
-    this._render();
+    // hass updates fire on every state change in the system. Rendering on
+    // each one would rebuild the editor continuously while it is open.
+    if (first) this._render(); else this._sync();
+  }
+
+  // Refresh values in place, never replacing elements, and never touching the
+  // control the user is currently interacting with.
+  _sync() {
+    const root = this.shadowRoot;
+    if (!root || !this._rendered) return;
+    const focused = root.activeElement;
+
+    const entity = root.querySelector('#entity');
+    if (entity && entity !== focused && this._config?.entity !== undefined) {
+      if (entity.value !== this._config.entity) entity.value = this._config.entity;
+    }
+
+    const title = root.querySelector('#title');
+    if (title && title !== focused) {
+      const want = this._config?.title || '';
+      if (title.value !== want) title.value = want;
+    }
   }
 
   _render() {
@@ -1330,7 +1356,7 @@ class PetlibroFeedingCardEditor extends HTMLElement {
         </div>
         <div class="field">
           <label>Card Title (optional)</label>
-          <input type="text" id="title" value="${this._config?.title || ''}" placeholder="Feeding Schedule">
+          <input type="text" id="title" value="${(this._config?.title || '').replace(/"/g, '&quot;')}" placeholder="Feeding Schedule">
           <div class="hint">Custom title for the card header</div>
         </div>
       </div>
@@ -1345,6 +1371,8 @@ class PetlibroFeedingCardEditor extends HTMLElement {
       this._config = { ...this._config, title: e.target.value };
       this._fireChanged();
     });
+
+    this._rendered = true;
   }
 
   _fireChanged() {

@@ -432,18 +432,6 @@ class PetlibroFeedingScheduleSensor(PetlibroEntity, SensorEntity):
         plans = self._device.feeding_plans
         attrs: dict = {"plan_count": len(plans)}
 
-        for i, plan in enumerate(plans):
-            slot = plan.get("planId", i + 1)
-            local_time = _utc_to_local(plan.get("executionTime", ""))
-            portions = plan.get("grainNum", 1)
-            days = _format_days(plan.get("repeatDay", []))
-            audio = "Yes" if plan.get("enableAudio", True) else "No"
-
-            attrs[f"plan_{slot}_time"] = local_time
-            attrs[f"plan_{slot}_portions"] = portions
-            attrs[f"plan_{slot}_days"] = days
-            attrs[f"plan_{slot}_audio"] = audio
-
         # Describe the feeder so the Lovelace card can render the right control
         # without knowing model numbers: a plate feeder schedules "which plate,
         # open for how long", an auger feeder schedules "how many portions".
@@ -452,6 +440,24 @@ class PetlibroFeedingScheduleSensor(PetlibroEntity, SensorEntity):
         attrs["supports_plates"] = plate_feeder
         if plate_feeder:
             attrs["plate_count"] = getattr(self._device.profile, "PLATE_COUNT", 0)
+
+
+        for i, plan in enumerate(plans):
+            slot = plan.get("planId", i + 1)
+            local_time = _utc_to_local(plan.get("executionTime", ""))
+            days = _format_days(plan.get("repeatDay", []))
+            audio = "Yes" if plan.get("enableAudio", True) else "No"
+
+            attrs[f"plan_{slot}_time"] = local_time
+            attrs[f"plan_{slot}_days"] = days
+            attrs[f"plan_{slot}_audio"] = audio
+            # Only publish the amount the model actually has. Emitting a
+            # portions figure for a plate feeder reads as real data.
+            if plate_feeder:
+                attrs[f"plan_{slot}_plate"] = plan.get("plate")
+                attrs[f"plan_{slot}_duration"] = plan.get("feedingDuration")
+            else:
+                attrs[f"plan_{slot}_portions"] = plan.get("grainNum", 1)
 
         # Structured plan data for the Lovelace card
         attrs["plans"] = [
@@ -462,11 +468,17 @@ class PetlibroFeedingScheduleSensor(PetlibroEntity, SensorEntity):
                 "time_display": _utc_to_local(plan.get("executionTime", "")),
                 "days": [d for d in plan.get("repeatDay", []) if d > 0],
                 "audio": plan.get("enableAudio", True),
-                # Only one of these is meaningful per model. Both keys are
-                # always present so the card never has to test for existence.
-                "portions": None if plate_feeder else plan.get("grainNum", 1),
-                "plate": plan.get("plate") if plate_feeder else None,
-                "duration": plan.get("feedingDuration") if plate_feeder else None,
+                # Only the keys this model actually has. The card
+                # null-coalesces, so an absent key is safe and a null one just
+                # renders as "null".
+                **(
+                    {
+                        "plate": plan.get("plate"),
+                        "duration": plan.get("feedingDuration"),
+                    }
+                    if plate_feeder
+                    else {"portions": plan.get("grainNum", 1)}
+                ),
             }
             for i, plan in enumerate(plans)
         ]
