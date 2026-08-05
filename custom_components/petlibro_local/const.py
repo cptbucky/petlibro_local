@@ -96,6 +96,10 @@ PET_DETECT_LEAVE = "LEAVE"
 EXEC_STEP_GRAIN_THAW = "GRAIN_THAW"
 EXEC_STEP_GRAIN_START = "GRAIN_START"
 EXEC_STEP_OPEN_DOOR = "OPEN_DOOR"
+# Observed 2026-08-05 in vendor traffic, immediately before GRAIN_END and
+# carrying finished=false. The door shuts here; GRAIN_END then closes out the
+# cycle with finished=true.
+EXEC_STEP_CLOSE_DOOR = "CLOSE_DOOR"
 EXEC_STEP_GRAIN_END = "GRAIN_END"
 
 # Plate homing state (zeroState). The firmware refuses to actuate unless this
@@ -122,6 +126,9 @@ CAP_AUDIO_TEST = "audio_test"                # can play call-to-eat audio
 CAP_FEEDING_PLANS = "feeding_plans"
 CAP_DETECTION = "detection"                  # camera models
 CAP_PET_PRESENCE = "pet_presence"            # infrared pet proximity sensor
+CAP_SD_CARD = "sd_card"                      # onboard storage; camera models
+CAP_TEMPERATURE = "temperature"              # cooled models report it on the
+                                             # heartbeat
 
 # Code response values
 CODE_OK = 0

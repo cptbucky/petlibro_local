@@ -151,6 +151,10 @@ WET_FIELDS = {
     # difference between "the feeder is broken" and "reseat the plate".
     "zeroState": "zero_state",
     "platePosition": "plate_position",
+    # Cabinet temperature, in degrees Celsius. Arrives on every heartbeat
+    # rather than in an attribute push, and only on cooled models - which is
+    # why it is mapped here and not in the shared map.
+    "temperature": "temperature",
     "closeDoorTime": "close_door_time",
     "doorCheckSignalTime": "door_check_signal_time",
     "doorNotcheckSignalTime": "door_notcheck_signal_time",

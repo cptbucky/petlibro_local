@@ -59,8 +59,25 @@ pause refrigeration, rotate to the plate, open the door, close it after
 `feedingDuration` seconds — reporting progress as `execStep`:
 
 ```
-GRAIN_THAW -> GRAIN_START -> OPEN_DOOR -> GRAIN_END
+GRAIN_THAW -> GRAIN_START -> OPEN_DOOR -> CLOSE_DOOR -> GRAIN_END
 ```
+
+**Observed 2026-08-05.** `CLOSE_DOOR` was missing from an earlier version of
+this list. It arrives immediately before `GRAIN_END`, carrying
+`finished: false`, and only `GRAIN_END` carries `finished: true`:
+
+```
+CLOSE_DOOR  finished:false  plate:3  feedingDuration:210  execTime:1785940468677
+GRAIN_END   finished:true   plate:3  feedingDuration:210  execTime:1785940468677
+```
+
+Both share one `msgId` and `execTime`, so a feed cycle is correlated by
+`execTime` rather than by message. Anything treating "not GRAIN_END" as "still
+feeding" is correct; anything enumerating the steps must include `CLOSE_DOOR`.
+
+**Observed.** The feed that produced the trace above reported `planId: 1`,
+while stored plans carry eight-digit ids. Do not assume `planId` in an output
+event resolves to a plan in the pushed list.
 
 **Tested.** The door closes only at `GRAIN_END`. A power cycle does **not**
 close an open door; the cycle has to complete.
@@ -97,6 +114,10 @@ nothing actuates. A feed therefore cannot be fabricated.
 - **Tested.** The ack echoes `{planId, syncTime}` for each stored plan. This is
   the only read-back available: it confirms which plans exist, not their
   contents.
+- **Observed 2026-08-05.** `syncTime` in that ack is always `0`, across every
+  push seen — creates and edits alike. It carries no information; only the ids
+  are meaningful. An earlier reading of this document implied `syncTime` might
+  be a usable timestamp. It is not.
 - **Tested.** The device does **not validate plan contents**. `plate: 99` was
   accepted with `code 0` on a three-plate carousel. Any client must validate
   before sending, and a `code 0` response is not evidence that a field is
@@ -119,18 +140,40 @@ involved. Local scheduling works.
 immediately, without opening the door. This is distinct from feeding and is
 easily mistaken for it.
 
+### Resolved 2026-08-05
+
+- **`executionTime` is local time, not UTC.** The vendor suffixes its UTC
+  fields explicitly and does not suffix this one — in the same session it sent
+  `lightingStartTimeUtc: "07:00"` and `soundStartTimeUtc: "07:00"` alongside
+  `executionTime: "17:00"`. Converting local → UTC before sending a wet plan
+  would shift every feed by the offset.
+
+  *Strength: strong but indirect.* It rests on the vendor's own naming
+  convention rather than on a feed observed firing at a known wall-clock time.
+  A single scheduled feed timed against the clock would make it conclusive.
+
+- **`executionDay` is server-managed — the integration must roll it forward.**
+  Editing a plan's time moved its date without being asked to:
+
+  ```
+  14:34  planId 44452179  executionTime 07:00  executionDay 2026-08-06
+  14:37  planId 44452179  executionTime 21:00  executionDay 2026-08-07
+  ```
+
+  while `planId 44452178` kept `2026-08-05` and changed only its time. So the
+  server, not the device, decides the next occurrence. A local integration that
+  does not advance `executionDay` gets one occurrence and then silence, which
+  is what `046dd15` fixes.
+
 ### Unresolved
 
-- **Timezone of `executionTime`.** The auger service converts local → UTC before
-  sending, but this has not been confirmed for wet plans. Getting it wrong
-  shifts every scheduled feed by the UTC offset.
 - **Whether `repeatDay` is honoured.** The field is accepted, but the device
   accepts anything, so acceptance proves nothing. Distinguishing it requires
-  observing behaviour across days.
-- **Whether `executionDay` advances by itself.** The vendor repeatedly pushed the
-  same `planId` with a changed `executionDay` and `optCode: PLATE_POSTPONE`,
-  which is consistent with the *server* rolling the date forward. If so, a local
-  integration must do the same or schedules stop after one occurrence.
+  observing behaviour across days. Note the wet plans captured on 2026-08-05
+  carried **no `repeatDay` at all** — only `executionDay` — whereas PLAF203
+  plans in the same capture did carry `repeatDay: [7,1,2,3,4,5,6]`. That is
+  weak evidence that wet plans are single-occurrence by design and that
+  recurrence is entirely the server's job.
 
 ## Plate homing (`zeroState`)
 
@@ -163,9 +206,46 @@ irSensorIdenTimeout idenFirstPlateTime zeroState
 ringerMode ringerInterval ringerDuration
 ```
 
+**Observed 2026-08-05**, settable via `ATTR_SET_SERVICE` but never appearing in
+an attribute push, so they are write-mostly and invisible unless you watch the
+vendor set them:
+
+```
+lightingStartTimeUtc lightingEndTimeUtc      (e.g. "07:00" / "19:00")
+soundStartTimeUtc    soundEndTimeUtc         (e.g. "07:00" / "19:00")
+temperatureCheckSwitch                       (bool)
+```
+
+These are the light and sound aging windows — the `*AgingType` attributes above
+select the mode, and these carry its schedule. Unlike `executionTime` they are
+explicitly UTC.
+
 No grain attributes appear — no `surplusGrain`, `motorState` or
-`grainOutletState`. `temperature` arrives on the heartbeat, this being a cooled
-feeder.
+`grainOutletState` — and no storage attributes either: `sdCardState`,
+`sdCardTotalCapacity` and `sdCardUsedCapacity` are sent by the PLAF203 in the
+same capture and never by this model.
+
+`temperature` arrives on the **heartbeat**, this being a cooled feeder, not in
+an attribute push:
+
+```json
+{"cmd": "HEARTBEAT", "count": 1455, "rssi": -37, "wifiType": 1,
+ "temperature": 16.63}
+```
+
+That means it updates roughly every 90 seconds without polling, and that a
+field map covering only attribute pushes will silently drop it.
+
+**Observed.** `electricQuantity` reads `0` on every push, with `powerType: 1`
+and `powerMode: 1`. The PLAF203 also reports `0`, so this is not a wet-feeder
+quirk and the attribute is genuinely supported — it simply has no charge to
+report on a mains-powered unit.
+
+**Observed.** The vendor polls exactly one attribute via
+`GET_SOME_ATTR_SERVICE`, and it is `platePosition` — not `zeroState`. An
+earlier note here claimed `zeroState` was what the cloud polled before feeding;
+that was wrong. `zeroState` still gates actuation (see below), but the cloud
+does not read it on this path.
 
 ## Telemetry on a local broker — works
 
@@ -222,4 +302,16 @@ Two pitfalls cost real time and are worth repeating:
   happened. Capture raw, filter afterwards.
 - The proxy must reach the vendor by **IP, not hostname**. Resolving the
   hostname inside a network that overrides it returns the proxy's own address
-  and produces a loop rather than a relay.
+  and produces a loop rather than a relay. The underlying cause is *which
+  resolver answers*: query a public one directly and refuse to start if the
+  answer is a local address.
+- The override record's **TTL applies to the feeder too**. With `TTL 3600`, a
+  PLAF109 kept reconnecting to the pre-change address for the best part of an
+  hour while a PLAF203 on the same network moved immediately — which looks
+  exactly like a firmware difference and is not one. Drop the TTL to 60s before
+  repointing, or no test inside the window means anything.
+
+The 2026-08-05 observations in this document come from
+[petlibro-local-proxy](https://github.com/erosen14/petlibro-local-proxy), a
+rebuilt version of that rig which records decoded JSONL alongside the raw byte
+stream, so a decoding mistake costs a re-decode rather than the capture.

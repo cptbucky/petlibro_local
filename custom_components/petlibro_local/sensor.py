@@ -13,12 +13,19 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import (
     PERCENTAGE,
     SIGNAL_STRENGTH_DECIBELS_MILLIWATT,
+    UnitOfTemperature,
     EntityCategory,
 )
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from .const import CAP_DISPENSE_PLATE, CAP_DISPENSE_PORTIONS, CAP_PLATE
+from .const import (
+    CAP_DISPENSE_PLATE,
+    CAP_DISPENSE_PORTIONS,
+    CAP_PLATE,
+    CAP_SD_CARD,
+    CAP_TEMPERATURE,
+)
 from .entity import PetlibroEntity
 from .coordinator import PetlibroCoordinator
 
@@ -43,10 +50,20 @@ async def async_setup_entry(
         PetlibroFirmwareVersionSensor(coordinator),
         PetlibroPowerModeSensor(coordinator),
         PetlibroPowerTypeSensor(coordinator),
-        PetlibroSdCardCapacitySensor(coordinator),
-        PetlibroSdCardUsedSensor(coordinator),
         PetlibroFeedingScheduleSensor(coordinator),
     ]
+
+    # Onboard storage exists only on camera models. A plate feeder never sends
+    # an sdCard* attribute, so these sat permanently unavailable on it.
+    if device.supports(CAP_SD_CARD):
+        entities += [
+            PetlibroSdCardCapacitySensor(coordinator),
+            PetlibroSdCardUsedSensor(coordinator),
+        ]
+
+    # Cooled models report cabinet temperature on the heartbeat.
+    if device.supports(CAP_TEMPERATURE):
+        entities.append(PetlibroTemperatureSensor(coordinator))
 
     # Auger-only: a wet feeder reports no grain attributes at all.
     if device.supports(CAP_DISPENSE_PORTIONS):
@@ -88,8 +105,12 @@ class PetlibroFeedingStepSensor(PetlibroEntity, SensorEntity):
     """Current phase of a feed cycle.
 
     A wet feed is not instantaneous: the device pauses refrigeration, rotates
-    the plate and opens the door, reporting GRAIN_THAW, GRAIN_START, OPEN_DOOR
-    then GRAIN_END as it goes.
+    the plate, opens the door, then shuts it again - reporting GRAIN_THAW,
+    GRAIN_START, OPEN_DOOR, CLOSE_DOOR then GRAIN_END as it goes.
+
+    Only GRAIN_END carries finished=true. CLOSE_DOOR arrives immediately
+    before it with finished=false, so treating any step other than GRAIN_END
+    as "still feeding" is correct.
     """
 
     _attr_name = "Feeding Step"
@@ -154,6 +175,27 @@ class PetlibroWifiRssiSensor(PetlibroEntity, SensorEntity):
     @property
     def native_value(self):
         return self.coordinator.data.get("wifi_rssi")
+
+
+class PetlibroTemperatureSensor(PetlibroEntity, SensorEntity):
+    """Cabinet temperature of a refrigerated feeder.
+
+    Arrives on the heartbeat rather than in an attribute push, so it updates
+    roughly every 90 seconds without needing to be polled.
+    """
+
+    _attr_name = "Temperature"
+    _attr_device_class = SensorDeviceClass.TEMPERATURE
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_native_unit_of_measurement = UnitOfTemperature.CELSIUS
+
+    @property
+    def unique_id(self) -> str:
+        return f"{self._device.serial}_temperature"
+
+    @property
+    def native_value(self):
+        return self.coordinator.data.get("temperature")
 
 
 class PetlibroMotorStateSensor(PetlibroEntity, SensorEntity):

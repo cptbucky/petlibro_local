@@ -7,7 +7,8 @@ Protocol observed directly from vendor cloud traffic, not inferred:
     <- event/post   WET_GRAIN_OUTPUT_EVENT {finished, feedingDuration, planId,
                                             plate, execTime}
     -> event/sub    ack {code: 0, execStep}
-                    GRAIN_THAW -> GRAIN_START -> OPEN_DOOR -> GRAIN_END
+                    GRAIN_THAW -> GRAIN_START -> OPEN_DOOR -> CLOSE_DOOR
+                                                           -> GRAIN_END
 
 Two behaviours differ fundamentally from an auger feeder:
 
@@ -59,6 +60,7 @@ from ..const import (
     CMD_PET_DETECT_EVENT,
     CMD_MACHINE_INFRARED_EVENT,
     CAP_PET_PRESENCE,
+    CAP_TEMPERATURE,
     PET_DETECT_NEAR,
     DEFAULT_WET_FEEDING_DURATION,
     ZERO_STATE_SUCCESS,
@@ -85,6 +87,10 @@ class WetFeeder:
         CAP_AUDIO_TEST,
         CAP_FEEDING_PLANS,
         CAP_PET_PRESENCE,
+        # This one is refrigerated and reports its cabinet temperature on
+        # every heartbeat. No CAP_SD_CARD: it has no camera and never sends
+        # an sdCard* attribute.
+        CAP_TEMPERATURE,
     })
 
     def build_plans(self, plans: list[dict]) -> str:
@@ -113,9 +119,10 @@ class WetFeeder:
 
         Deliberately not named `dispense`: this is not an auger turning N
         times. The firmware runs a multi-second sequence - pause refrigeration,
-        rotate to the plate, open the door - and reports progress through
-        WET_GRAIN_OUTPUT_EVENT.execStep (GRAIN_THAW, GRAIN_START, OPEN_DOOR,
-        GRAIN_END). No quantity appears anywhere in it.
+        rotate to the plate, open the door, shut it again - and reports
+        progress through WET_GRAIN_OUTPUT_EVENT.execStep (GRAIN_THAW,
+        GRAIN_START, OPEN_DOOR, CLOSE_DOOR, GRAIN_END). No quantity appears
+        anywhere in it.
         """
         if not 1 <= plate <= self.PLATE_COUNT:
             _LOGGER.error(

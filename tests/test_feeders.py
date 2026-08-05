@@ -497,3 +497,58 @@ def test_a_four_hour_plan_is_servable():
     f.device.feeding_plans = [{"planId": 9, "plate": 1, "feedingDuration": 240 * 60}]
     f.run(f.device.serve_plate(1))
     assert f.last()[1]["feedingDuration"] == 14400
+
+
+# --- capability gating and heartbeat telemetry -----------------------------
+#
+# The payloads below are copied verbatim from vendor traffic captured on
+# 2026-08-05 (petlibro-local-proxy), not invented, so they assert against what
+# the devices genuinely send.
+
+
+def test_wet_feeder_reports_cabinet_temperature_on_the_heartbeat():
+    """A refrigerated feeder puts temperature on every heartbeat rather than in
+    an attribute push. It was previously dropped by the field map, so the value
+    arrived roughly every 90s and went nowhere."""
+    f = Feeder(WET)
+    f.receive(cmd="HEARTBEAT", count=1455, rssi=-37, wifiType=1, temperature=16.63)
+    assert f.device.state["temperature"] == 16.63
+
+
+def test_dry_feeder_heartbeat_carries_no_temperature():
+    """The auger model does not send it, which is why it is mapped per-model."""
+    f = Feeder(DRY)
+    f.receive(cmd="HEARTBEAT", count=1343, rssi=-59, wifiType=2)
+    assert "temperature" not in f.device.state
+
+
+def test_only_cooled_models_declare_the_temperature_capability():
+    assert const.CAP_TEMPERATURE in Feeder(WET).device.profile.CAPABILITIES
+    assert const.CAP_TEMPERATURE not in Feeder(DRY).device.profile.CAPABILITIES
+
+
+def test_only_camera_models_declare_sd_card():
+    """A plate feeder never sends an sdCard* attribute, so the storage sensors
+    sat permanently unavailable on it."""
+    assert const.CAP_SD_CARD in Feeder(DRY).device.profile.CAPABILITIES
+    assert const.CAP_SD_CARD not in Feeder(WET).device.profile.CAPABILITIES
+
+
+def test_close_door_is_a_feed_step_and_is_not_the_end_of_the_cycle():
+    """CLOSE_DOOR arrives immediately before GRAIN_END carrying finished=false.
+    Treating it as the end would report a feed complete while the door is still
+    shutting."""
+    f = Feeder(WET)
+    f.receive(
+        cmd="WET_GRAIN_OUTPUT_EVENT", finished=False, feedingDuration=210,
+        planId=1, plate=3, execTime=1785940468677, execStep="CLOSE_DOOR",
+    )
+    assert f.device.state["wet_exec_step"] == const.EXEC_STEP_CLOSE_DOOR
+    assert f.device.state["wet_finished"] is False
+
+    f.receive(
+        cmd="WET_GRAIN_OUTPUT_EVENT", finished=True, feedingDuration=210,
+        planId=1, plate=3, execTime=1785940468677, execStep="GRAIN_END",
+    )
+    assert f.device.state["wet_exec_step"] == const.EXEC_STEP_GRAIN_END
+    assert f.device.state["wet_finished"] is True

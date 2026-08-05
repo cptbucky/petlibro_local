@@ -17,6 +17,7 @@ from ..const import (
     CAP_DETECTION,
     CAP_DISPENSE_PORTIONS,
     CAP_FEEDING_PLANS,
+    CAP_SD_CARD,
     CMD_DETECTION_EVENT,
     CMD_FEEDING_PLAN_SERVICE,
     CMD_GET_FEEDING_PLAN_EVENT,
@@ -39,6 +40,9 @@ class DryFeeder:
         CAP_DISPENSE_PORTIONS,
         CAP_FEEDING_PLANS,
         CAP_DETECTION,
+        # Camera models record to onboard storage and report sdCardState,
+        # sdCardTotalCapacity and sdCardUsedCapacity. Plate feeders never do.
+        CAP_SD_CARD,
     })
 
     def build_plans(self, plans: list[dict]) -> str:
