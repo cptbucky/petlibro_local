@@ -552,3 +552,93 @@ def test_close_door_is_a_feed_step_and_is_not_the_end_of_the_cycle():
     )
     assert f.device.state["wet_exec_step"] == const.EXEC_STEP_GRAIN_END
     assert f.device.state["wet_finished"] is True
+
+
+# --- timezone: why scheduled feeds ran at the wrong hour --------------------
+#
+# A wet plan's executionTime is wall-clock time in the *device's* timezone, and
+# the NTP response is the only channel that tells the device what that is. The
+# expected values below are copied from vendor traffic captured 2026-08-05.
+
+import os  # noqa: E402
+import time as _time  # noqa: E402
+
+from custom_components.petlibro_local.protocol import codec  # noqa: E402
+
+
+class london:
+    """Pin the process to Europe/London so DST assertions are deterministic."""
+
+    def __enter__(self):
+        self._old = os.environ.get("TZ")
+        os.environ["TZ"] = "Europe/London"
+        _time.tzset()
+
+    def __exit__(self, *exc):
+        if self._old is None:
+            del os.environ["TZ"]
+        else:
+            os.environ["TZ"] = self._old
+        _time.tzset()
+
+
+# 2026-08-05 14:34 UTC — the moment of the capture, during BST.
+CAPTURE_TS = 1785940462
+
+
+def test_ntp_response_carries_the_offset_the_firmware_actually_uses():
+    """Sending only `timezone` left the device on UTC, so a plan entered as
+    17:00 fired at 17:00 UTC — an hour late in BST. The vendor sends
+    timezoneOffsetSeconds and that is what the firmware honours."""
+    with london():
+        msg = json.loads(codec.build_ntp_response())
+    assert msg["timezoneOffsetSeconds"] == 3600
+    assert msg["timezone"] == 1
+    # An integer on the wire, as the vendor sends — not 1.0.
+    assert isinstance(msg["timezone"], int)
+
+
+def test_ntp_sync_carries_the_same_timezone_block():
+    with london():
+        msg = json.loads(codec.build_ntp_sync())
+    assert msg["timezoneOffsetSeconds"] == 3600
+
+
+def test_next_two_dst_transitions_match_the_vendor():
+    """The vendor preloads the next two transitions so the device adjusts
+    itself when the clocks change. These are the exact values it sent."""
+    with london():
+        transitions = codec.next_dst_transitions(CAPTURE_TS, count=2)
+    assert transitions == [
+        (1792890000, 0),      # 2026-10-25 01:00 UTC, BST -> GMT
+        (1806195600, 3600),   # 2027-03-28 01:00 UTC, GMT -> BST
+    ]
+
+
+def test_timezone_payload_matches_the_captured_vendor_payload():
+    with london():
+        payload = codec.timezone_payload(CAPTURE_TS)
+    assert payload == {
+        "timezoneOffsetSeconds": 3600,
+        "timezone": 1,
+        "nextDSTTransitionTs": 1792890000000,
+        "nextDSTOffsetSeconds": 0,
+        "secondNextDSTTransitionTs": 1806195600000,
+        "secondNextDSTOffsetSeconds": 3600,
+    }
+
+
+def test_a_zone_without_dst_omits_the_transition_fields():
+    """Sending a transition timestamp of 0 would be worse than sending none."""
+    old = os.environ.get("TZ")
+    os.environ["TZ"] = "UTC"
+    _time.tzset()
+    try:
+        payload = codec.timezone_payload(CAPTURE_TS)
+    finally:
+        if old is None:
+            del os.environ["TZ"]
+        else:
+            os.environ["TZ"] = old
+        _time.tzset()
+    assert payload == {"timezoneOffsetSeconds": 0, "timezone": 0}

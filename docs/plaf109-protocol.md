@@ -45,6 +45,10 @@ Channels in use: `heart`, `ntp`, `config`, `service`, `event`.
 | `PET_DETECT_EVENT` | ← device | `{type: "NEAR" \| "LEAVE"}` |
 | `MACHINE_INFRARED_EVENT` | ← device | `{irState: bool}` |
 
+`NTP` is shared but carries more than a clock: its reply sets the device's
+timezone, which is what `executionTime` in a plan is measured against. See
+[Scheduling](#scheduling) — getting it wrong shifts every scheduled feed.
+
 Shared with other models: `HEARTBEAT`, `NTP`, `ATTR_GET_SERVICE`,
 `ATTR_SET_SERVICE`, `ATTR_PUSH_EVENT`, `DEVICE_START_EVENT`, `ERROR_EVENT`,
 `GET_CONFIG`.
@@ -148,9 +152,36 @@ easily mistaken for it.
   `executionTime: "17:00"`. Converting local → UTC before sending a wet plan
   would shift every feed by the offset.
 
-  *Strength: strong but indirect.* It rests on the vendor's own naming
-  convention rather than on a feed observed firing at a known wall-clock time.
-  A single scheduled feed timed against the clock would make it conclusive.
+  But "local" is whatever the device has been *told*, and the NTP reply is the
+  only channel that tells it:
+
+  ```json
+  {"cmd": "NTP", "ts": ..., "code": 0, "calibrationTag": false,
+   "timezoneOffsetSeconds": 3600,
+   "nextDSTOffsetSeconds": 0,          "nextDSTTransitionTs": 1792890000000,
+   "secondNextDSTOffsetSeconds": 3600, "secondNextDSTTransitionTs": 1806195600000,
+   "timezone": 1}
+  ```
+
+  **`timezoneOffsetSeconds` is the field the firmware honours.** An NTP reply
+  carrying only `timezone` leaves the device on UTC, and a plan entered as
+  17:00 then fires at 17:00 UTC — an hour late in BST. That was this
+  integration's behaviour until 2026-08-05: it sent `timezone` alone, and users
+  compensated by entering times in UTC and letting them run at BST. That
+  workaround is how the bug was found, and it is also why the naming-convention
+  argument above looked wrong from the outside — the plan time really is local,
+  but the device's idea of local was never set.
+
+  **The `nextDST*` / `secondNextDST*` fields are not optional either.** The
+  vendor preloads the next two transitions with the offset that applies after
+  each, so the device re-bases itself when the clocks change: `1792890000000`
+  is 2026-10-25 01:00 UTC (BST→GMT), `1806195600000` is 2027-03-28 01:00 UTC
+  (GMT→BST). A correct offset without these drifts by an hour at the next
+  transition.
+
+  *Still worth doing:* time one scheduled feed against the wall clock now that
+  the offset is sent. Everything above is consistent, but no feed has yet been
+  observed firing at a known local time with a correct NTP reply in place.
 
 - **`executionDay` is server-managed — the integration must roll it forward.**
   Editing a plan's time moved its date without being asked to:
