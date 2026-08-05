@@ -481,7 +481,7 @@ class PetlibroFeedingScheduleSensor(PetlibroEntity, SensorEntity):
         attrs["feeder_type"] = "plate" if plate_feeder else "auger"
         attrs["supports_plates"] = plate_feeder
         if plate_feeder:
-            attrs["plate_count"] = getattr(self._device.profile, "PLATE_COUNT", 0)
+            attrs["plate_count"] = self._device.profile.PLATE_COUNT
 
 
         for i, plan in enumerate(plans):

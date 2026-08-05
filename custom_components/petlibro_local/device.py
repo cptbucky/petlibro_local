@@ -168,13 +168,26 @@ class PetlibroDevice:
         """Dispense a quantity of kibble. Auger feeders only."""
         dispense = getattr(self.profile, "dispense", None)
         if dispense is None:
-            _LOGGER.error(
-                "Device %s is a %s: it feeds by serving a plate, not by "
-                "quantity. Use the Serve Plate buttons on the device page "
-                "instead of manual_feed.",
-                self.serial,
-                self.profile.MODEL_NAME,
-            )
+            if getattr(self.profile, "serve_plate", None) is not None:
+                _LOGGER.error(
+                    "Device %s is a %s: it feeds by serving a plate, not by "
+                    "quantity. Use the Serve Plate buttons on the device page "
+                    "instead of manual_feed.",
+                    self.serial,
+                    self.profile.MODEL_NAME,
+                )
+            else:
+                # No profile for this model, so we do not know how it feeds.
+                # Emitting a guess would be worse than refusing: an unsupported
+                # command is dropped silently and looks like it worked.
+                _LOGGER.error(
+                    "Device %s has no feeder profile (%s), so feeding is "
+                    "disabled: sending a feed command we cannot verify would "
+                    "silently do nothing. Please open an issue with this "
+                    "device's product id so a profile can be added.",
+                    self.serial,
+                    self.profile.MODEL_NAME,
+                )
             return
         await dispense(self, portions=portions)
 

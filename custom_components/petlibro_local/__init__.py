@@ -157,7 +157,7 @@ def _register_services(hass: HomeAssistant) -> None:
         # Gated on capability so an untested model keeps the auger default.
         if coordinator.device.supports(CAP_DISPENSE_PLATE):
             plate = int(call.data.get("plate", 1))
-            plate_count = getattr(coordinator.device.profile, "PLATE_COUNT", 3)
+            plate_count = coordinator.device.profile.PLATE_COUNT
             if not 1 <= plate <= plate_count:
                 _LOGGER.error(
                     "Plate %s is out of range (1-%s); plan not set", plate, plate_count

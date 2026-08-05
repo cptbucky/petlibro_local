@@ -44,6 +44,13 @@ class FeederProfile(Protocol):
     #: model (planId/execStep/finished differ on auger vs plate feeders).
     FIELDS: dict[str, str]
 
+    # Capability-conditional members are deliberately NOT declared here. A
+    # Protocol is structural and total: adding PLATE_COUNT would make every
+    # non-plate profile fail `isinstance`, contradicting this module's promise
+    # that profiles satisfy FeederProfile structurally. Those contracts live
+    # with their capability constant in const.py instead - see
+    # CAP_DISPENSE_PLATE.
+
     def build_plans(self, plans: list[dict]) -> str:
         """Serialise a plan list using this model's plan command."""
         ...
@@ -71,26 +78,25 @@ def _registry() -> list[FeederProfile]:
 def get_profile(product_id: str | None) -> FeederProfile:
     """Return the profile for a product id.
 
-    Falls back to the auger profile for unknown models, matching the historical
-    behaviour of this integration, and logs it so an unrecognised feeder is
-    visible rather than silently mistreated.
+    An unrecognised model gets `UnknownFeeder`: it parses and reports like an
+    auger feeder but cannot dispense. Offering a Dispense button for hardware we
+    have never seen risks a control that reports success and never feeds, since
+    the firmware drops commands it does not implement without complaint.
     """
     pid = (product_id or "").upper()
     for profile in _registry():
         if pid in profile.PRODUCT_IDS:
             return profile
 
-    from .dry import DryFeeder
+    from .unknown import UnknownFeeder
 
     if pid:
-        _LOGGER.info(
-            "Unknown product id %s - using the auger profile. If this feeder "
-            "does not respond to feed commands it likely needs its own profile.",
+        _LOGGER.warning(
+            "Unknown product id %s - falling back to a read-only profile. "
+            "Sensors will work; feeding is disabled because a feeder that does "
+            "not implement a command drops it silently, so a Dispense button "
+            "would look like it worked. Adding a profile for this model is a "
+            "small change - please open an issue with this product id.",
             pid,
         )
-    return DryFeeder()
-
-
-def known_product_ids() -> set[str]:
-    """Every product id with a dedicated profile."""
-    return {pid for p in _registry() for pid in p.PRODUCT_IDS}
+    return UnknownFeeder()

@@ -198,12 +198,42 @@ def test_wet_model_is_recognised_case_insensitively(pid):
 
 
 @pytest.mark.parametrize("pid", [None, "PLAF999"])
-def test_unknown_model_falls_back_to_auger_behaviour(pid):
-    """Preserves the integration's historical default rather than leaving an
-    untested feeder with no behaviour at all."""
+def test_unknown_model_still_parses_and_reports(pid):
+    """An unrecognised feeder keeps the shared message handling, so sensors and
+    diagnostics work rather than the device being inert."""
+    f = Feeder(pid)
+    f.receive(cmd="HEARTBEAT", count=1, rssi=-50, wifiType=1)
+    assert f.device.online
+
+
+@pytest.mark.parametrize("pid", [None, "PLAF999"])
+def test_unknown_model_refuses_to_dispense(pid):
+    """The PLAF109 showed that a feeder drops a command it does not implement
+    without complaint, so a Dispense button on hardware we have never seen would
+    report success and never feed. Better to emit nothing and say why."""
     f = Feeder(pid)
     f.run(f.device.manual_feed(portions=1))
-    assert f.last()[1]["cmd"] == "MANUAL_FEEDING_SERVICE"
+    assert f.sent == []
+    assert const.CAP_DISPENSE_PORTIONS not in f.device.profile.CAPABILITIES
+
+
+def test_unknown_model_is_not_labelled_as_a_known_one():
+    """The device registry previously fell back to the string "PLAF203"."""
+    assert "PLAF" not in Feeder("PLAF999").device.profile.MODEL_NAME
+
+
+def test_plate_count_is_present_exactly_when_plates_are_supported():
+    """Readers access PLATE_COUNT directly inside a supports() branch, so the
+    contract is: declare it iff you declare the capability. Two readers used to
+    guess different defaults (0 and 3) for a profile that lacked it."""
+    from custom_components.petlibro_local.feeders import get_profile
+
+    for pid in (WET, DRY, "PLAF999"):
+        profile = get_profile(pid)
+        has_plates = const.CAP_DISPENSE_PLATE in profile.CAPABILITIES
+        assert hasattr(profile, "PLATE_COUNT") is has_plates, pid
+        if has_plates:
+            assert profile.PLATE_COUNT >= 1
 
 
 def test_each_model_addresses_its_own_topics():

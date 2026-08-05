@@ -103,9 +103,6 @@ REVERSE_FIELD_MAP: dict[str, str] = {v: k for k, v in FIELD_MAP.items()}
 # Fields that should not be included in state updates (metadata only)
 META_FIELDS = {"cmd", "msgId", "ts", "code", "msg"}
 
-# Heartbeat fields from device
-HEARTBEAT_FIELDS = {"count", "rssi", "wifiType"}
-
 # Device start event fields
 DEVICE_START_FIELDS = {
     "pid": "product_id",

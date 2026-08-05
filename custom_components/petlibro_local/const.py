@@ -120,6 +120,12 @@ WET_FEEDING_MAX_MINUTES = 240  # 4 hours
 # model gets the entities its protocol actually supports instead of being
 # assumed to have an auger. Declared by each feeder profile in feeders/.
 CAP_DISPENSE_PORTIONS = "dispense_portions"  # auger; feed takes a quantity
+# Declaring CAP_DISPENSE_PLATE obliges the profile to expose PLATE_COUNT (its
+# number of physical carousel plates) and a `serve_plate` coroutine. Every
+# reader of PLATE_COUNT sits inside a `supports(CAP_DISPENSE_PLATE)` branch and
+# accesses it directly, so a plate profile that omits it fails loudly rather
+# than silently reporting someone's guess - two readers used to default to 0
+# and 3 respectively for the same missing attribute.
 CAP_DISPENSE_PLATE = "dispense_plate"        # carousel; feed references a plan
 CAP_PLATE = "plate"                          # plate position / homing state
 CAP_AUDIO_TEST = "audio_test"                # can play call-to-eat audio
