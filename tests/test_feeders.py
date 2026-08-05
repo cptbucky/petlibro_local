@@ -672,3 +672,54 @@ def test_a_zone_without_dst_omits_the_transition_fields():
             os.environ["TZ"] = old
         _time.tzset()
     assert payload == {"timezoneOffsetSeconds": 0, "timezone": 0}
+
+
+# --- plan times are local, end to end --------------------------------------
+#
+# executionTime is wall-clock time in the *device's* timezone, and the NTP
+# reply sets that timezone to ours. The integration used to convert local->UTC
+# on write and back on display, which was self-consistent only while the device
+# was left on UTC. Now that the offset is sent, no conversion may happen.
+
+BST = datetime.timezone(datetime.timedelta(hours=1))
+
+
+def test_plan_time_reaches_the_wire_unchanged():
+    """No conversion between what the user picked and what is sent. A local
+    offset applied here would shift every scheduled feed by that offset."""
+    f = Feeder(WET)
+    f.run(f.device.set_feeding_plans([
+        {"planId": 1, "plate": 1, "executionTime": "17:00", "feedingDuration": 240},
+    ]))
+    _, msg = f.last()
+    assert msg["plans"][0]["executionTime"] == "17:00"
+
+
+def test_dry_plan_time_also_reaches_the_wire_unchanged():
+    """Both models get the same NTP timezone block, so both read plan times as
+    local. The rule is not wet-feeder-specific."""
+    f = Feeder(DRY)
+    f.run(f.device.set_feeding_plans([
+        {"planId": 1, "executionTime": "07:30", "grainNum": 2},
+    ]))
+    _, msg = f.last()
+    assert msg["plans"][0]["executionTime"] == "07:30"
+
+
+def test_the_next_day_rolls_on_the_local_clock_not_utc():
+    """The case the old UTC comparison got wrong.
+
+    At 00:45 BST on Tuesday the 4th, a plan for 00:30 has already passed and
+    belongs on the 5th. The same instant is 23:45 UTC on Monday the 3rd, where
+    00:30 still looks like it is yet to come - so the plan would be dated the
+    4th and fire a day early.
+    """
+    local_now = datetime.datetime(2026, 8, 4, 0, 45, tzinfo=BST)
+    assert next_execution_day("00:30", [1, 2, 3, 4, 5, 6, 7], local_now) == "2026-08-05"
+
+    utc_same_instant = local_now.astimezone(datetime.timezone.utc)
+    assert utc_same_instant.date().isoformat() == "2026-08-03"
+    # Demonstrates the divergence rather than asserting the old behaviour is ok.
+    assert next_execution_day(
+        "00:30", [1, 2, 3, 4, 5, 6, 7], utc_same_instant
+    ) == "2026-08-04"

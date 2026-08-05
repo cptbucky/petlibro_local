@@ -367,46 +367,19 @@ class PetlibroSdCardUsedSensor(PetlibroEntity, SensorEntity):
         return self.coordinator.data.get("sd_card_used_capacity")
 
 
-def _utc_to_local(utc_time_str: str) -> str:
-    """Convert UTC HH:MM string to local timezone HH:MM AM/PM."""
+def _format_time_12h(time_str: str) -> str:
+    """Render a local HH:MM plan time as h:MM AM/PM.
+
+    There is no timezone conversion here any more. executionTime is wall-clock
+    time in the device's timezone, which the NTP reply sets to ours, so the
+    stored value is already local. The previous UTC->local step shifted every
+    displayed time by the local offset.
+    """
     try:
-        h, m = map(int, utc_time_str.split(":"))
-        utc_dt = datetime.datetime.combine(
-            datetime.date.today(),
-            datetime.time(h, m),
-            tzinfo=datetime.timezone.utc,
-        )
-        local_dt = utc_dt.astimezone()
-        return local_dt.strftime("%-I:%M %p")
+        h, m = map(int, time_str.split(":"))
+        return datetime.time(h, m).strftime("%-I:%M %p")
     except (ValueError, AttributeError):
-        return utc_time_str
-
-
-def _utc_to_local_24h(utc_time_str: str) -> str:
-    """Convert UTC HH:MM to local HH:MM in 24-hour format (for form inputs)."""
-    try:
-        h, m = map(int, utc_time_str.split(":"))
-        utc_dt = datetime.datetime.combine(
-            datetime.date.today(),
-            datetime.time(h, m),
-            tzinfo=datetime.timezone.utc,
-        )
-        local_dt = utc_dt.astimezone()
-        return f"{local_dt.hour:02}:{local_dt.minute:02}"
-    except (ValueError, AttributeError):
-        return utc_time_str
-
-
-def _format_days(repeat_day: list[int]) -> str:
-    """Format repeatDay array to human-readable string."""
-    active_days = [d for d in repeat_day if d > 0]
-    if not active_days or set(active_days) == {1, 2, 3, 4, 5, 6, 7}:
-        return "Every day"
-    if set(active_days) == {1, 2, 3, 4, 5}:
-        return "Weekdays"
-    if set(active_days) == {6, 7}:
-        return "Weekends"
-    return ", ".join(DAY_NAMES.get(d, str(d)) for d in sorted(active_days))
+        return time_str
 
 
 def _next_feed_time(plans: list[dict]) -> str | None:
@@ -437,8 +410,8 @@ def _next_feed_time(plans: list[dict]) -> str | None:
                 feed_dt = datetime.datetime.combine(
                     now.date() + datetime.timedelta(days=offset),
                     datetime.time(h, m),
-                    tzinfo=datetime.timezone.utc,
-                ).astimezone()
+                    tzinfo=now.tzinfo,
+                )
 
                 if feed_dt > now:
                     candidates.append(feed_dt)
@@ -486,7 +459,7 @@ class PetlibroFeedingScheduleSensor(PetlibroEntity, SensorEntity):
 
         for i, plan in enumerate(plans):
             slot = plan.get("planId", i + 1)
-            local_time = _utc_to_local(plan.get("executionTime", ""))
+            local_time = _format_time_12h(plan.get("executionTime", ""))
             days = _format_days(plan.get("repeatDay", []))
             audio = "Yes" if plan.get("enableAudio", True) else "No"
 
@@ -505,9 +478,8 @@ class PetlibroFeedingScheduleSensor(PetlibroEntity, SensorEntity):
         attrs["plans"] = [
             {
                 "slot": plan.get("planId", i + 1),
-                "time_utc": plan.get("executionTime", ""),
-                "time_local": _utc_to_local_24h(plan.get("executionTime", "")),
-                "time_display": _utc_to_local(plan.get("executionTime", "")),
+                "time_local": plan.get("executionTime", ""),
+                "time_display": _format_time_12h(plan.get("executionTime", "")),
                 "days": [d for d in plan.get("repeatDay", []) if d > 0],
                 "audio": plan.get("enableAudio", True),
                 # Only the keys this model actually has. The card

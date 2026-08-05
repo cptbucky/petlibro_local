@@ -171,7 +171,10 @@ async def _read_mosquitto_credentials() -> tuple[str, str]:
 class PetlibroLocalConfigFlow(ConfigFlow, domain=DOMAIN):
     """Handle a config flow for Petlibro Local."""
 
-    VERSION = 1
+    # 2: plan executionTime changed from UTC to device-local wall clock when
+    #    the NTP reply started carrying timezoneOffsetSeconds. Stored plans
+    #    written under v1 hold UTC times and are shifted by async_migrate_entry.
+    VERSION = 2
 
     @staticmethod
     def async_get_options_flow(
@@ -417,37 +420,23 @@ class PetlibroLocalConfigFlow(ConfigFlow, domain=DOMAIN):
 DAY_NAMES = {1: "Mon", 2: "Tue", 3: "Wed", 4: "Thu", 5: "Fri", 6: "Sat", 7: "Sun"}
 
 
-def _utc_to_local_time(utc_time_str: str) -> str:
-    """Convert UTC HH:MM to local HH:MM for display."""
+def _format_time_12h(time_str: str) -> str:
+    """Render a local HH:MM plan time as h:MM AM/PM.
+
+    No timezone conversion: executionTime is wall-clock time in the device's
+    timezone, which the NTP reply sets to ours, so it is already local.
+    """
     try:
-        h, m = map(int, utc_time_str.split(":"))
-        utc_dt = datetime.datetime.combine(
-            datetime.date.today(),
-            datetime.time(h, m),
-            tzinfo=datetime.timezone.utc,
-        )
-        local_dt = utc_dt.astimezone()
-        return local_dt.strftime("%-I:%M %p")
+        h, m = map(int, time_str.split(":"))
+        return datetime.time(h, m).strftime("%-I:%M %p")
     except (ValueError, AttributeError):
-        return utc_time_str
+        return time_str
 
-
-def _local_to_utc_time_str(local_time_str: str) -> str:
-    """Convert local HH:MM:SS or HH:MM to UTC HH:MM string."""
-    parts = local_time_str.split(":")
-    h, m = int(parts[0]), int(parts[1])
-    local_dt = datetime.datetime.combine(
-        datetime.date.today(),
-        datetime.time(h, m),
-        tzinfo=datetime.datetime.now().astimezone().tzinfo,
-    )
-    utc_dt = local_dt.astimezone(datetime.timezone.utc)
-    return f"{utc_dt.hour:02}:{utc_dt.minute:02}"
 
 
 def _format_plan_summary(plan: dict) -> str:
     """Format a single plan as a human-readable summary."""
-    local_time = _utc_to_local_time(plan.get("executionTime", "??:??"))
+    local_time = _format_time_12h(plan.get("executionTime", "??:??"))
     portions = plan.get("grainNum", 1)
     repeat_day = plan.get("repeatDay", [])
     active_days = [d for d in repeat_day if d > 0]
@@ -508,7 +497,7 @@ class PetlibroOptionsFlow(OptionsFlowWithConfigEntry):
             enable_audio = user_input.get("enable_audio", True)
 
             # Convert local time to UTC
-            execution_time = _local_to_utc_time_str(str(time_val))
+            execution_time = str(time_val)
 
             # Build repeat_day array
             if days_input:
@@ -632,7 +621,7 @@ class PetlibroOptionsFlow(OptionsFlowWithConfigEntry):
             hour = start_hour
             while hour < 24 and plan_id <= MAX_FEEDING_PLANS:
                 # Convert local hour to UTC
-                execution_time = _local_to_utc_time_str(f"{hour:02}:00")
+                execution_time = f"{hour:02}:00"
 
                 plans.append({
                     "planId": plan_id,

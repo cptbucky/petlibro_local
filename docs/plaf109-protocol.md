@@ -164,13 +164,21 @@ easily mistaken for it.
   ```
 
   **`timezoneOffsetSeconds` is the field the firmware honours.** An NTP reply
-  carrying only `timezone` leaves the device on UTC, and a plan entered as
-  17:00 then fires at 17:00 UTC — an hour late in BST. That was this
-  integration's behaviour until 2026-08-05: it sent `timezone` alone, and users
-  compensated by entering times in UTC and letting them run at BST. That
+  carrying only `timezone` leaves the device on whatever offset it last had,
+  and a plan is then interpreted against that rather than against the user's
+  clock. That was this integration's behaviour until 2026-08-05: it sent
+  `timezone` alone, and users compensated by entering times in UTC. That
   workaround is how the bug was found, and it is also why the naming-convention
   argument above looked wrong from the outside — the plan time really is local,
   but the device's idea of local was never set.
+
+  Fixing this is *two* changes, and doing only the first makes things worse.
+  Send the offset, **and** stop converting plan times to UTC in the
+  integration: it previously converted local→UTC on write and back on display,
+  which was self-consistent only while the device stayed on UTC. With the
+  offset sent and the conversion still in place, every feed fires an hour early
+  in BST. Plans persisted under the old scheme hold UTC times and need
+  migrating.
 
   **The `nextDST*` / `secondNextDST*` fields are not optional either.** The
   vendor preloads the next two transitions with the offset that applies after

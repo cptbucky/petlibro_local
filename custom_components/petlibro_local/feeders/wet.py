@@ -167,9 +167,12 @@ def next_execution_day(
     the same. This computes the next date matching the requested weekdays whose
     time has not already passed.
 
-    `execution_time` and `now` are both UTC, matching the stored plan.
+    `execution_time` and `now` are both *local* wall-clock, matching the stored
+    plan: the device interprets executionTime in its own timezone, which the
+    NTP reply sets to ours. Comparing a local plan time against a UTC clock
+    picks the wrong day either side of midnight.
     """
-    now = now or datetime.datetime.now(datetime.timezone.utc)
+    now = now or datetime.datetime.now().astimezone()
     try:
         hh, mm = (int(x) for x in execution_time.split(":")[:2])
     except (ValueError, AttributeError):

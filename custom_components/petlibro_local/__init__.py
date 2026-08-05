@@ -29,6 +29,62 @@ _LOGGER = logging.getLogger(__name__)
 PetlibroConfigEntry = ConfigEntry
 
 
+def _shift_utc_plan_to_local(time_str: str, offset_minutes: int) -> str:
+    """Reinterpret a stored UTC plan time as the equivalent local wall clock."""
+    try:
+        h, m = map(int, time_str.split(":"))
+    except (ValueError, AttributeError):
+        return time_str
+    total = (h * 60 + m + offset_minutes) % (24 * 60)
+    return f"{total // 60:02}:{total % 60:02}"
+
+
+async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    """Migrate stored plan times from UTC to device-local wall clock.
+
+    Until v2 the integration converted plan times local->UTC on the way out and
+    back on the way in, which was self-consistent only because the device was
+    left on UTC - the NTP reply never carried timezoneOffsetSeconds. Now that it
+    does, the device reads executionTime in our timezone, so a stored UTC time
+    would fire an hour early in BST.
+
+    The shift uses the offset in force at migration time. A plan is a recurring
+    wall-clock instruction rather than an instant, so there is no single correct
+    offset for one written months ago under a different DST state; the current
+    one is right for the overwhelmingly common case of migrating during the
+    season the plan was created in.
+    """
+    if entry.version >= 2:
+        return True
+
+    plans = entry.options.get(CONF_FEEDING_PLANS, [])
+    if plans:
+        offset = datetime.datetime.now().astimezone().utcoffset()
+        offset_minutes = int(offset.total_seconds() // 60) if offset else 0
+        migrated = []
+        for plan in plans:
+            p = dict(plan)
+            if p.get("executionTime"):
+                p["executionTime"] = _shift_utc_plan_to_local(
+                    p["executionTime"], offset_minutes
+                )
+            migrated.append(p)
+        hass.config_entries.async_update_entry(
+            entry,
+            options={**entry.options, CONF_FEEDING_PLANS: migrated},
+            version=2,
+        )
+        _LOGGER.info(
+            "Migrated %d feeding plan(s) from UTC to local (offset %+d minutes)",
+            len(migrated),
+            offset_minutes,
+        )
+    else:
+        hass.config_entries.async_update_entry(entry, version=2)
+
+    return True
+
+
 async def async_setup_entry(hass: HomeAssistant, entry: PetlibroConfigEntry) -> bool:
     """Set up Petlibro Local from a config entry."""
     coordinator = PetlibroCoordinator(hass, entry)
@@ -128,13 +184,11 @@ def _register_services(hass: HomeAssistant) -> None:
         else:
             h, m = time_val.hour, time_val.minute
 
-        local_dt = datetime.datetime.combine(
-            datetime.date.today(),
-            datetime.time(h, m),
-            tzinfo=datetime.datetime.now().astimezone().tzinfo,
-        )
-        utc_dt = local_dt.astimezone(datetime.timezone.utc)
-        execution_time = f"{utc_dt.hour:02}:{utc_dt.minute:02}"
+        # executionTime is wall-clock time in the *device's* timezone, and the
+        # NTP reply sets that timezone to ours. So the time the user picked
+        # goes on the wire unchanged - converting it to UTC here would shift
+        # every feed by the local offset.
+        execution_time = f"{h:02}:{m:02}"
 
         # Build repeat_day array
         if days:
