@@ -41,6 +41,10 @@ FIELD_MAP: dict[str, str] = {
     "soundAgingType": "sound_aging_type",
     "soundStartTimeUtc": "sound_start_time_utc",
     "soundEndTimeUtc": "sound_end_time_utc",
+    # Filter indicator LED on the Polar. Seen only in vendor ATTR_SET_SERVICE
+    # traffic - the device has never reported it - so this mapping exists to
+    # catch it if a firmware ever starts publishing it.
+    "filterLedSwitch": "filter_led_switch",
     "soundTimes": "sound_times",
     # Auto lock / physical buttons
     "autoChangeMode": "auto_change_mode",

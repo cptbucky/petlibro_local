@@ -332,6 +332,46 @@ on a local broker during a scheduled feed. That is likely the same measurement
 problem, but it has not been proven either way, so anything depending on feed
 progress should be verified before being relied upon.
 
+## Attributes the device accepts but never reports
+
+**Measured 2026-08-06.** The vendor sends `ATTR_SET_SERVICE` roughly twice per
+30-minute cycle, always with identical values. Five of the attributes it sets
+are **write-only**: the device acknowledges them and has never once included
+them in an `ATTR_PUSH_EVENT`, across 19 hours and 180 attribute pushes.
+
+| Attribute | Value the cloud sets | Reported back |
+|---|---|---|
+| `lightingStartTimeUtc` / `lightingEndTimeUtc` | `"07:00"` / `"19:00"` | never |
+| `soundStartTimeUtc` / `soundEndTimeUtc` | `"07:00"` / `"19:00"` | never |
+| `temperatureCheckSwitch` | `false` | never |
+| `filterLedSwitch` | `true` | never |
+| `irSensorIdenTimeout` | `2` | yes — see below |
+
+The acknowledgement is a bare `{"cmd": "ATTR_SET_SERVICE", "code": 0}` carrying
+no values, so — as with plan contents — **`code 0` is not evidence the setting
+was understood or applied**, only that the message was received.
+
+`irSensorIdenTimeout` is the odd one out and worth separating: the device
+reports it in every attribute push, always as `2`, and the cloud sets it to `2`
+forty-two times. That is a no-op, not a correction. Nothing needs to imitate it.
+
+### Ownership, again
+
+This is the same hazard as [plan ownership](#ownership), in a quieter form.
+These are user-visible settings — when the light and sound come on, whether the
+temperature check runs — that a local integration:
+
+- cannot read, so it cannot show the user their current state;
+- cannot verify, because the ack says only that the message arrived;
+- may need to re-assert, since the vendor's own cloud re-sends them every 30
+  minutes rather than trusting them to persist.
+
+Whether the device actually forgets them, or the cloud is simply being
+defensive, cannot be told apart from outside — both produce exactly this
+traffic. The safe assumption for a local integration is the pessimistic one:
+own these values locally and re-assert them on connect, the way it must already
+own the plan list.
+
 ## Device log report
 
 **Measured 2026-08-06.** `DEVICE_LOG_REPORT_EVENT` arrives on the 30 minute

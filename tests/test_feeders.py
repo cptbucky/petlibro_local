@@ -900,3 +900,37 @@ def test_the_stall_threshold_is_published_but_not_alarmed_on():
     assert f.device.state["plate_motor_current"] == 523
     # No derived fault state exists, deliberately.
     assert "plate_jammed" not in f.device.state
+
+
+# --- write-only attributes -------------------------------------------------
+
+
+def test_a_bare_ack_is_not_evidence_a_setting_applied():
+    """ATTR_SET_SERVICE is acknowledged with {code: 0} and no values. The five
+    write-only attributes are never echoed in any attribute push, so nothing
+    can confirm them - the same trap as plan contents."""
+    f = Feeder(WET)
+    f.receive(cmd="ATTR_SET_SERVICE", code=0)
+    for key in (
+        "lighting_start_time_utc",
+        "sound_start_time_utc",
+        "temperature_check_switch",
+        "filter_led_switch",
+    ):
+        assert key not in f.device.state, key
+
+
+def test_write_only_attributes_map_if_a_firmware_ever_reports_them():
+    """The mappings exist so a future firmware that does publish these is
+    captured, rather than silently dropped as filterLedSwitch was."""
+    f = Feeder(WET)
+    f.receive(
+        cmd="ATTR_PUSH_EVENT",
+        lightingStartTimeUtc="07:00", lightingEndTimeUtc="19:00",
+        soundStartTimeUtc="07:00", soundEndTimeUtc="19:00",
+        temperatureCheckSwitch=False, filterLedSwitch=True,
+    )
+    assert f.device.state["lighting_start_time_utc"] == "07:00"
+    assert f.device.state["sound_end_time_utc"] == "19:00"
+    assert f.device.state["temperature_check_switch"] is False
+    assert f.device.state["filter_led_switch"] is True
