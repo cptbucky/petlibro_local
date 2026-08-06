@@ -403,6 +403,27 @@ off at **09:34:02Z**:
 That is the third independent confirmation, after the PLAF109's scheduled feed
 and the PLAF203's, and the first from a non-feeding subsystem.
 
+### Light and sound modes
+
+`lightAgingType` and `soundAgingType` select how the output behaves, decoded
+2026-08-06 by watching the device react:
+
+| Value | Meaning | Evidence |
+|---|---|---|
+| `2` | **Scheduled** — obeys `*StartTimeUtc`/`*EndTimeUtc` | window 09:32–09:34 set; device reported `enableLight: false` at 09:34:02Z |
+| `1` | **Always** — ignores the window | set 09:45:27Z with that window long expired; device reported `enableLight: true` at once |
+
+Three attributes are involved and they are easy to confuse:
+
+- `lightSwitch` — the master on/off the user controls
+- `lightAgingType` — always-on versus scheduled
+- `enableLight` — the device reporting what the light is *actually* doing, which
+  is why it changes on its own at a window boundary
+
+Both models report all three. `cameraAgingType` and `videoRecordAgingType` on
+the auger model very likely follow the same convention, though that has not
+been confirmed by observation.
+
 ### Ringer
 
 `ringerMode` takes `NORMAL` and `SMART`; this device shipped as `SMART`.

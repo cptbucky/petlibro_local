@@ -51,7 +51,7 @@ class PetlibroRingerInterval(PetlibroEntity, NumberEntity):
         return self.coordinator.data.get("ringer_interval")
 
     async def async_set_native_value(self, value: float) -> None:
-        await self._device.set_attributes(ringer_interval=int(value))
+        await self._device.set_attributes(ringerInterval=int(value))
 
 
 class PetlibroRingerDuration(PetlibroEntity, NumberEntity):
@@ -73,7 +73,7 @@ class PetlibroRingerDuration(PetlibroEntity, NumberEntity):
         return self.coordinator.data.get("ringer_duration")
 
     async def async_set_native_value(self, value: float) -> None:
-        await self._device.set_attributes(ringer_duration=int(value))
+        await self._device.set_attributes(ringerDuration=int(value))
 
 
 class PetlibroDispensePortions(PetlibroEntity, NumberEntity):

@@ -973,3 +973,54 @@ def test_a_bare_ack_is_not_evidence_a_setting_applied():
     f = Feeder(WET)
     f.receive(cmd="ATTR_SET_SERVICE", code=0)
     assert "lighting_start_time_utc" not in f.device.state
+
+
+# --- attribute writes must use the wire's own key names --------------------
+
+
+def test_attribute_writes_reach_the_wire_as_camelcase():
+    """set_attributes documents camelCase, and denormalize_attrs passes an
+    unknown key through verbatim. Keys living in WET_FIELDS are absent from
+    REVERSE_FIELD_MAP, so a snake_case call would put `ringer_mode` on the wire
+    and the device would ignore it - silently, as it ignores everything it does
+    not recognise."""
+    from custom_components.petlibro_local.protocol.messages import denormalize_attrs
+
+    # In the shared map, so either spelling survives.
+    assert "lightAgingType" in denormalize_attrs(light_aging_type=2)
+    assert "lightAgingType" in denormalize_attrs(lightAgingType=2)
+
+    # Not in the shared map: only the camelCase form is correct.
+    assert "ringerMode" in denormalize_attrs(ringerMode="SMART")
+    assert "ringerMode" not in denormalize_attrs(ringer_mode="SMART")
+
+
+def test_light_and_sound_modes_are_readable_from_the_snapshot():
+    """Unlike the schedule windows these are in the 23-attribute snapshot, so a
+    select showing their state is honest rather than optimistic."""
+    f = Feeder(WET)
+    f.receive(cmd="ATTR_PUSH_EVENT", lightAgingType=2, soundAgingType=1)
+    assert f.device.state["light_aging_type"] == 2
+    assert f.device.state["sound_aging_type"] == 1
+
+
+def test_scheduled_mode_lets_the_device_switch_itself_off():
+    """Mode 2 obeys the window: set 09:32-09:34, the device reported
+    enableLight false at 09:34:02Z of its own accord."""
+    f = Feeder(WET)
+    f.receive(cmd="ATTR_PUSH_EVENT", lightAgingType=2,
+              lightingStartTimeUtc="09:32", lightingEndTimeUtc="09:34")
+    f.receive(cmd="ATTR_PUSH_EVENT", enableLight=False)
+    assert f.device.state["light_aging_type"] == 2
+    assert f.device.state["enable_light"] is False
+
+
+def test_always_mode_ignores_an_expired_window():
+    """Mode 1 set at 09:45 while the 09:32-09:34 window had long passed, and
+    the device reported enableLight true immediately."""
+    f = Feeder(WET)
+    f.receive(cmd="ATTR_PUSH_EVENT", lightAgingType=1,
+              lightingStartTimeUtc="09:32", lightingEndTimeUtc="09:34")
+    f.receive(cmd="ATTR_PUSH_EVENT", enableLight=True)
+    assert f.device.state["light_aging_type"] == 1
+    assert f.device.state["enable_light"] is True
