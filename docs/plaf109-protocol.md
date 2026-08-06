@@ -332,6 +332,32 @@ on a local broker during a scheduled feed. That is likely the same measurement
 problem, but it has not been proven either way, so anything depending on feed
 progress should be verified before being relied upon.
 
+## Liveness and cadence
+
+**Measured 2026-08-06**, over 19 hours of vendor traffic on a TCP session that
+never dropped:
+
+| | PLAF109 | PLAF203 |
+|---|---|---|
+| `HEARTBEAT` interval | **90s** (p95 91s) | 72s |
+| `DEVICE_START_EVENT` | every 30 min | every 30 min |
+| `NTP` exchange | every 30 min | every 30 min |
+| `DEVICE_CONFIG_SYNC` | every 30 min | every 30 min |
+
+Two consequences worth designing for:
+
+**An offline watchdog must clear 91s.** Anything shorter marks the PLAF109 dead
+between every pair of heartbeats. This integration used 81s, so the feeder — and
+therefore every entity on it — flapped unavailable roughly every 90 seconds.
+
+**`DEVICE_START_EVENT` is not a boot event.** It arrives every 30 minutes on a
+connection that never dropped, and the heartbeat `count` ran from 1285 to 2069
+across 43 of them without a single reset — a restart would have zeroed it. It is
+a periodic re-announce. Treating each one as a restart and re-requesting the full
+attribute set costs 48 needless round trips a day.
+
+The reliable restart signal is the heartbeat `count` going backwards.
+
 ## Response codes
 
 | Code | Meaning |

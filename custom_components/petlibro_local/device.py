@@ -294,9 +294,23 @@ class PetlibroDevice:
             )
 
     async def _handle_device_start(self, payload: dict) -> None:
-        """Device just started up — respond and request full state."""
+        """Handle DEVICE_START_EVENT.
+
+        Despite the name this is **not** a boot event. Measured over 19 hours
+        of vendor traffic (2026-08-06): it arrives every 30 minutes on a TCP
+        session that never dropped, while the heartbeat counter ran from 1285
+        to 2069 without a single reset. A device that had restarted would have
+        reset that counter.
+
+        So it is a periodic re-announce, and re-requesting the full attribute
+        set on every one of them is 48 needless round trips a day. The refresh
+        now happens only when the device was not already online - a genuine
+        (re)connection - or when the heartbeat counter shows it really did
+        restart, which `_handle_heartbeat` detects.
+        """
         msg_id = payload.get("msgId")
         self.device_info = normalize_payload(payload, self.profile.FIELDS)
+        was_online = self.online
         self.online = True
         self._last_heartbeat = time.monotonic()
 
@@ -306,8 +320,8 @@ class PetlibroDevice:
             build_response(CMD_DEVICE_START_EVENT, msg_id),
         )
 
-        # Request full state
-        await self._on_device_online()
+        if not was_online:
+            await self._on_device_online()
         self._notify_state_changed()
 
     async def _handle_attr_push(self, payload: dict) -> None:

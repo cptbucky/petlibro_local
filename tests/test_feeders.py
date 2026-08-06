@@ -787,3 +787,52 @@ def test_restart_reason_is_captured_from_the_start_event():
         softwareVersion="1.2.3", restartReason="other",
     )
     assert f.device.device_info["restart_reason"] == "other"
+
+
+# --- liveness: cadence measured from the devices themselves ----------------
+
+
+def test_offline_watchdog_clears_the_slowest_observed_heartbeat():
+    """Measured 2026-08-06: PLAF203 beats every 72s, PLAF109 every 90s (p95
+    91s). The watchdog was 81s, which sits *below* the PLAF109's cadence - so
+    that feeder was marked offline on every cycle and every entity on it went
+    unavailable roughly every 90 seconds."""
+    slowest_observed = 91
+    assert const.HEARTBEAT_WATCHDOG_SEC > slowest_observed
+    # Three consecutive misses before declaring it gone.
+    assert const.HEARTBEAT_WATCHDOG_SEC >= slowest_observed * 3
+
+
+def test_a_periodic_device_start_does_not_re_request_state():
+    """DEVICE_START_EVENT is not a boot event. Measured over 19 hours: it
+    arrives every 30 minutes on a TCP session that never dropped, while the
+    heartbeat counter ran 1285 -> 2069 with no reset. Treating each one as a
+    restart cost a full attribute request 48 times a day."""
+    f = Feeder(DRY)
+    f.receive(cmd="HEARTBEAT", count=1285, rssi=-50, wifiType=1)
+    assert f.device.online
+    f.sent.clear()
+
+    f.receive(cmd="DEVICE_START_EVENT", success=True, pid=DRY, softwareVersion="1.0")
+    # It is still acknowledged - the device expects that - but nothing else.
+    assert f.commands == ["DEVICE_START_EVENT"]
+    assert "ATTR_GET_SERVICE" not in f.commands
+    assert "NTP_SYNC" not in f.commands
+
+
+def test_a_device_start_while_offline_still_refreshes():
+    """A genuine (re)connection must still pull full state."""
+    f = Feeder(DRY)
+    assert not f.device.online
+    f.receive(cmd="DEVICE_START_EVENT", success=True, pid=DRY, softwareVersion="1.0")
+    assert "ATTR_GET_SERVICE" in f.commands
+
+
+def test_a_heartbeat_counter_reset_still_counts_as_a_restart():
+    """The counter resetting is the one reliable restart signal, so it must
+    keep triggering a refresh even though DEVICE_START_EVENT no longer does."""
+    f = Feeder(DRY)
+    f.receive(cmd="HEARTBEAT", count=900, rssi=-50, wifiType=1)
+    f.sent.clear()
+    f.receive(cmd="HEARTBEAT", count=3, rssi=-50, wifiType=1)
+    assert "ATTR_GET_SERVICE" in f.commands

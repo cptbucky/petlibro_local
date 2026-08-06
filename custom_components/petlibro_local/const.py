@@ -34,7 +34,14 @@ CONF_MQTT_PASSWORD = "mqtt_password"
 CONF_FEEDING_PLANS = "feeding_plans"
 
 # Timing
-HEARTBEAT_WATCHDOG_SEC = 81
+# How long without a heartbeat before the device is considered offline.
+# Measured cadences (2026-08-06, 19h of vendor traffic): PLAF203 every 72s,
+# PLAF109 every 90s (p95 91s). The old value of 81s sat *below* the PLAF109's
+# cadence, so that feeder was marked offline on every single cycle and every
+# one of its entities went unavailable roughly every 90 seconds. This allows
+# three consecutive misses at the slower rate.
+HEARTBEAT_WATCHDOG_SEC = 300
+# How often the watchdog wakes to check. Unrelated to the device's cadence.
 HEARTBEAT_INTERVAL_SEC = 30
 NTP_DRIFT_THRESHOLD_SEC = 10
 DEVICE_INIT_WATCHDOG_SEC = 10
