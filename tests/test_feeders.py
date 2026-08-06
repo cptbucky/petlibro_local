@@ -902,35 +902,74 @@ def test_the_stall_threshold_is_published_but_not_alarmed_on():
     assert "plate_jammed" not in f.device.state
 
 
-# --- write-only attributes -------------------------------------------------
+# --- delta pushes and the ringer --------------------------------------------
+#
+# The device pushes ATTR_PUSH_EVENT in two shapes: a 23-attribute snapshot, and
+# deltas of one or two keys. Six attributes appear only in deltas. Payloads
+# below are copied verbatim from traffic captured 2026-08-06.
 
 
-def test_a_bare_ack_is_not_evidence_a_setting_applied():
-    """ATTR_SET_SERVICE is acknowledged with {code: 0} and no values. The five
-    write-only attributes are never echoed in any attribute push, so nothing
-    can confirm them - the same trap as plan contents."""
+def test_a_delta_push_updates_only_what_it_carries():
+    """A value that does not change is never re-sent, so state must accumulate
+    across pushes rather than being replaced by each one."""
     f = Feeder(WET)
-    f.receive(cmd="ATTR_SET_SERVICE", code=0)
-    for key in (
-        "lighting_start_time_utc",
-        "sound_start_time_utc",
-        "temperature_check_switch",
-        "filter_led_switch",
-    ):
-        assert key not in f.device.state, key
+    f.receive(cmd="ATTR_PUSH_EVENT", volume=50, zeroState="SUCCESS", ringerMode="SMART")
+    f.receive(cmd="ATTR_PUSH_EVENT", enableLight=False)
+    assert f.device.state["enable_light"] is False
+    assert f.device.state["volume"] == 50          # survives the delta
+    assert f.device.state["ringer_mode"] == "SMART"
 
 
-def test_write_only_attributes_map_if_a_firmware_ever_reports_them():
-    """The mappings exist so a future firmware that does publish these is
-    captured, rather than silently dropped as filterLedSwitch was."""
+def test_schedule_windows_arrive_as_a_delta():
+    """These six never appear in the snapshot, only when changed - which is why
+    an integration cannot read them on demand and must own them."""
+    f = Feeder(WET)
+    f.receive(
+        cmd="ATTR_PUSH_EVENT", lightAgingType=2, lightingStartTimeUtc="09:32",
+        lightingEndTimeUtc="09:34", lightingTimes=2,
+    )
+    assert f.device.state["lighting_start_time_utc"] == "09:32"
+    assert f.device.state["lighting_end_time_utc"] == "09:34"
+    assert f.device.state["lighting_times"] == 2
+
+
+def test_the_local_companion_fields_map_too():
+    """The cloud sends lightingStartTime alongside lightingStartTimeUtc. The
+    device acts on the UTC one, but both should be captured rather than
+    silently dropped."""
     f = Feeder(WET)
     f.receive(
         cmd="ATTR_PUSH_EVENT",
-        lightingStartTimeUtc="07:00", lightingEndTimeUtc="19:00",
-        soundStartTimeUtc="07:00", soundEndTimeUtc="19:00",
-        temperatureCheckSwitch=False, filterLedSwitch=True,
+        lightingStartTimeUtc="09:32", lightingStartTime="10:32",
+        soundEndTimeUtc="09:34", soundEndTime="10:34",
     )
-    assert f.device.state["lighting_start_time_utc"] == "07:00"
-    assert f.device.state["sound_end_time_utc"] == "19:00"
-    assert f.device.state["temperature_check_switch"] is False
-    assert f.device.state["filter_led_switch"] is True
+    assert f.device.state["lighting_start_time_utc"] == "09:32"
+    assert f.device.state["lighting_start_time_local"] == "10:32"
+    assert f.device.state["sound_end_time_local"] == "10:34"
+
+
+def test_the_device_acts_on_the_utc_window_not_the_local_one():
+    """A window set to end 10:34 BST (09:34 UTC) switched the light off at
+    09:34:02Z. Third independent confirmation that the device runs on UTC."""
+    f = Feeder(WET)
+    f.receive(cmd="ATTR_PUSH_EVENT", lightingEndTimeUtc="09:34", lightingEndTime="10:34")
+    f.receive(cmd="ATTR_PUSH_EVENT", enableLight=False)
+    assert f.device.state["lighting_end_time_utc"] == "09:34"
+    assert f.device.state["enable_light"] is False
+
+
+def test_ringer_attributes_are_readable_from_the_snapshot():
+    """Unlike the schedule windows these are in the 23-attribute snapshot, so
+    exposing them as controls is safe - their state can be read back."""
+    f = Feeder(WET)
+    f.receive(cmd="ATTR_PUSH_EVENT", ringerMode="SMART", ringerInterval=4, ringerDuration=10)
+    assert f.device.state["ringer_mode"] == "SMART"
+    assert f.device.state["ringer_interval"] == 4
+    assert f.device.state["ringer_duration"] == 10
+
+
+def test_a_bare_ack_is_not_evidence_a_setting_applied():
+    """ATTR_SET_SERVICE is acknowledged with {code: 0} and no values."""
+    f = Feeder(WET)
+    f.receive(cmd="ATTR_SET_SERVICE", code=0)
+    assert "lighting_start_time_utc" not in f.device.state

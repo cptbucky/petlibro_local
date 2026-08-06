@@ -332,45 +332,82 @@ on a local broker during a scheduled feed. That is likely the same measurement
 problem, but it has not been proven either way, so anything depending on feed
 progress should be verified before being relied upon.
 
-## Attributes the device accepts but never reports
+## Attributes absent from the snapshot
 
-**Measured 2026-08-06.** The vendor sends `ATTR_SET_SERVICE` roughly twice per
-30-minute cycle, always with identical values. Five of the attributes it sets
-are **write-only**: the device acknowledges them and has never once included
-them in an `ATTR_PUSH_EVENT`, across 19 hours and 180 attribute pushes.
+**Measured 2026-08-06, corrected the same day.** An earlier revision of this
+section claimed these attributes were write-only and "never reported back",
+based on 19 hours in which the device never sent them. That was a sampling
+artefact and the conclusion was wrong: **the device pushes deltas.** A value
+that does not change is never re-sent, and the cloud had been setting identical
+values all along, so there was nothing to observe.
 
-| Attribute | Value the cloud sets | Reported back |
-|---|---|---|
-| `lightingStartTimeUtc` / `lightingEndTimeUtc` | `"07:00"` / `"19:00"` | never |
-| `soundStartTimeUtc` / `soundEndTimeUtc` | `"07:00"` / `"19:00"` | never |
-| `temperatureCheckSwitch` | `false` | never |
-| `filterLedSwitch` | `true` | never |
-| `irSensorIdenTimeout` | `2` | yes — see below |
+Changing one from the vendor app proved it — the device echoed the new values
+back within seconds:
 
-The acknowledgement is a bare `{"cmd": "ATTR_SET_SERVICE", "code": 0}` carrying
-no values, so — as with plan contents — **`code 0` is not evidence the setting
-was understood or applied**, only that the message was received.
+```
+09:32:19Z  cloud -> device   lightingStartTimeUtc "09:32", lightingEndTimeUtc "09:34",
+                             lightAgingType 2, lightingTimes 2
+09:32:20Z  device -> cloud   lightAgingType 2, lightingStartTimeUtc "09:32",
+                             lightingEndTimeUtc "09:34", lightingTimes 2
+```
 
-`irSensorIdenTimeout` is the odd one out and worth separating: the device
-reports it in every attribute push, always as `2`, and the cloud sets it to `2`
-forty-two times. That is a no-op, not a correction. Nothing needs to imitate it.
+The real, narrower property is this. `ATTR_PUSH_EVENT` comes in two shapes: a
+**full snapshot** of 23 attributes, and **deltas** of one or two. Six attributes
+appear only in deltas and never in the snapshot:
 
-### Ownership, again
+```
+lightingStartTimeUtc  lightingEndTimeUtc  lightingTimes
+soundStartTimeUtc     soundEndTimeUtc     soundTimes
+```
 
-This is the same hazard as [plan ownership](#ownership), in a quieter form.
-These are user-visible settings — when the light and sound come on, whether the
-temperature check runs — that a local integration:
+`lightAgingType`, `soundAgingType`, `enableLight`, `enableSound` and
+`ringerMode` *are* in the snapshot. `temperatureCheckSwitch` and
+`filterLedSwitch` have still never been seen from the device, but the same
+caution now applies — they may simply not have changed.
 
-- cannot read, so it cannot show the user their current state;
-- cannot verify, because the ack says only that the message arrived;
-- may need to re-assert, since the vendor's own cloud re-sends them every 30
-  minutes rather than trusting them to persist.
+### Why it still matters
 
-Whether the device actually forgets them, or the cloud is simply being
-defensive, cannot be told apart from outside — both produce exactly this
-traffic. The safe assumption for a local integration is the pessimistic one:
-own these values locally and re-assert them on connect, the way it must already
-own the plan list.
+`ATTR_GET_SERVICE` returns the snapshot, so an integration **cannot read the
+current schedule windows on demand**. It can only learn them by being connected
+when they change. After a restart it knows nothing about them until the user
+edits one.
+
+So the ownership conclusion survives, for a different reason than originally
+given: not because the values are unreadable, but because they are
+unobtainable at the moment you need them. A local integration should own them.
+
+The acknowledgement remains a bare `{"cmd": "ATTR_SET_SERVICE", "code": 0}`
+with no values, so `code 0` still means only that the message arrived.
+
+### Local companions to the UTC fields
+
+The cloud sends both forms:
+
+```json
+{"lightingStartTimeUtc": "09:32", "lightingStartTime": "10:32",
+ "lightingEndTimeUtc":   "09:34", "lightingEndTime":   "10:34"}
+```
+
+The device echoes only the `*Utc` variants, and acts on them — see below.
+
+### A third confirmation that the device runs on UTC
+
+A light window was set to end at 10:34 BST, i.e. 09:34 UTC. The device switched
+off at **09:34:02Z**:
+
+```
+09:34:02Z  device -> cloud   {"enableLight": false}
+09:34:02Z  device -> cloud   {"enableSound": false}
+```
+
+That is the third independent confirmation, after the PLAF109's scheduled feed
+and the PLAF203's, and the first from a non-feeding subsystem.
+
+### Ringer
+
+`ringerMode` takes `NORMAL` and `SMART`; this device shipped as `SMART`.
+`ringerInterval` was seen at 2 and 4, `ringerDuration` at 10. All three are in
+the snapshot, so they are readable and safe to expose as controls.
 
 ## Device log report
 

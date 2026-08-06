@@ -4,10 +4,11 @@ from __future__ import annotations
 
 from homeassistant.components.number import NumberEntity, NumberMode
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from .const import CAP_DISPENSE_PORTIONS
+from .const import CAP_AUDIO_TEST, CAP_DISPENSE_PORTIONS
 from .entity import PetlibroEntity
 from .coordinator import PetlibroCoordinator
 
@@ -22,7 +23,57 @@ async def async_setup_entry(
     # portions slider would be meaningless on it.
     if coordinator.device.supports(CAP_DISPENSE_PORTIONS):
         entities.append(PetlibroDispensePortions(coordinator))
+    # Ringer tuning, on models that have a call-to-eat ringer.
+    if coordinator.device.supports(CAP_AUDIO_TEST):
+        entities += [
+            PetlibroRingerInterval(coordinator),
+            PetlibroRingerDuration(coordinator),
+        ]
     async_add_entities(entities)
+
+
+class PetlibroRingerInterval(PetlibroEntity, NumberEntity):
+    """Gap between rings when calling the animal. Observed values 2 and 4."""
+
+    _attr_name = "Ringer Interval"
+    _attr_icon = "mdi:timer-outline"
+    _attr_native_min_value = 1
+    _attr_native_max_value = 60
+    _attr_native_step = 1
+    _attr_entity_category = EntityCategory.CONFIG
+
+    @property
+    def unique_id(self) -> str:
+        return f"{self._device.serial}_ringer_interval"
+
+    @property
+    def native_value(self):
+        return self.coordinator.data.get("ringer_interval")
+
+    async def async_set_native_value(self, value: float) -> None:
+        await self._device.set_attributes(ringer_interval=int(value))
+
+
+class PetlibroRingerDuration(PetlibroEntity, NumberEntity):
+    """How long the feeder rings for. Observed value 10."""
+
+    _attr_name = "Ringer Duration"
+    _attr_icon = "mdi:bell-outline"
+    _attr_native_min_value = 1
+    _attr_native_max_value = 60
+    _attr_native_step = 1
+    _attr_entity_category = EntityCategory.CONFIG
+
+    @property
+    def unique_id(self) -> str:
+        return f"{self._device.serial}_ringer_duration"
+
+    @property
+    def native_value(self):
+        return self.coordinator.data.get("ringer_duration")
+
+    async def async_set_native_value(self, value: float) -> None:
+        await self._device.set_attributes(ringer_duration=int(value))
 
 
 class PetlibroDispensePortions(PetlibroEntity, NumberEntity):

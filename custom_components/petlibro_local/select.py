@@ -7,7 +7,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from .const import CAP_DETECTION
+from .const import CAP_AUDIO_TEST, CAP_DETECTION
 from .entity import PetlibroEntity
 from .coordinator import PetlibroCoordinator
 
@@ -23,17 +23,58 @@ async def async_setup_entry(
     were six permanently unavailable entities on that model.
     """
     coordinator: PetlibroCoordinator = entry.runtime_data
-    if not coordinator.device.supports(CAP_DETECTION):
+    device = coordinator.device
+    entities: list[SelectEntity] = []
+
+    # The wet feeder's call-to-eat ringer. NORMAL and SMART are the values
+    # observed from the vendor app; SMART is the default this device shipped
+    # with.
+    if device.supports(CAP_AUDIO_TEST):
+        entities.append(PetlibroRingerModeSelect(coordinator))
+
+    if not device.supports(CAP_DETECTION):
+        async_add_entities(entities)
         return
 
-    async_add_entities([
+    entities += [
         PetlibroNightVisionSelect(coordinator),
         PetlibroResolutionSelect(coordinator),
         PetlibroVideoRecordModeSelect(coordinator),
         PetlibroMotionDetectionRangeSelect(coordinator),
         PetlibroMotionDetectionSensitivitySelect(coordinator),
         PetlibroSoundDetectionSensitivitySelect(coordinator),
-    ])
+    ]
+    async_add_entities(entities)
+
+
+class PetlibroRingerModeSelect(PetlibroEntity, SelectEntity):
+    """How the feeder rings to call the animal at feeding time.
+
+    Values observed from the vendor app on a PLAF109: NORMAL and SMART. SMART
+    is what the device shipped with. Any other value the firmware may accept is
+    unknown, so an unrecognised one is surfaced verbatim rather than hidden.
+    """
+
+    _attr_name = "Ringer Mode"
+    _attr_icon = "mdi:bell-ring"
+    _attr_options = ["Normal", "Smart"]
+
+    _OPTION_MAP = {"NORMAL": "Normal", "SMART": "Smart"}
+    _REVERSE_MAP = {"Normal": "NORMAL", "Smart": "SMART"}
+
+    @property
+    def unique_id(self) -> str:
+        return f"{self._device.serial}_ringer_mode"
+
+    @property
+    def current_option(self) -> str | None:
+        val = self.coordinator.data.get("ringer_mode")
+        if val is None:
+            return None
+        return self._OPTION_MAP.get(str(val), str(val))
+
+    async def async_select_option(self, option: str) -> None:
+        await self._device.set_attributes(ringer_mode=self._REVERSE_MAP[option])
 
 
 class PetlibroNightVisionSelect(PetlibroEntity, SelectEntity):

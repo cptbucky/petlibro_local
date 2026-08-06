@@ -34,6 +34,11 @@ FIELD_MAP: dict[str, str] = {
     "lightAgingType": "light_aging_type",
     "lightingStartTimeUtc": "lighting_start_time_utc",
     "lightingEndTimeUtc": "lighting_end_time_utc",
+    # The cloud sends a local-time companion alongside each UTC field
+    # ("lightingStartTimeUtc": "09:32" with "lightingStartTime": "10:32").
+    # The device echoes back only the UTC form, and acts on it.
+    "lightingStartTime": "lighting_start_time_local",
+    "lightingEndTime": "lighting_end_time_local",
     "lightingTimes": "lighting_times",
     # Sound
     "soundSwitch": "sound_switch",
@@ -41,6 +46,8 @@ FIELD_MAP: dict[str, str] = {
     "soundAgingType": "sound_aging_type",
     "soundStartTimeUtc": "sound_start_time_utc",
     "soundEndTimeUtc": "sound_end_time_utc",
+    "soundStartTime": "sound_start_time_local",
+    "soundEndTime": "sound_end_time_local",
     # Filter indicator LED on the Polar. Seen only in vendor ATTR_SET_SERVICE
     # traffic - the device has never reported it - so this mapping exists to
     # catch it if a firmware ever starts publishing it.
