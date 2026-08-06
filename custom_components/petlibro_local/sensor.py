@@ -20,6 +20,7 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import (
+    CAP_DETECTION,
     CAP_DISPENSE_PLATE,
     CAP_DISPENSE_PORTIONS,
     CAP_PLATE,
@@ -70,6 +71,11 @@ async def async_setup_entry(
     # Bowl configuration is an auger concept; a carousel has plates instead.
     if device.supports(CAP_DISPENSE_PORTIONS):
         entities.append(PetlibroBowlModeSensor(coordinator))
+
+    # Camera day/night state, salvaged from telemetry the device sends on the
+    # error channel.
+    if device.supports(CAP_DETECTION):
+        entities.append(PetlibroCameraLightStateSensor(coordinator))
 
     # Auger-only: a wet feeder reports no grain attributes at all.
     if device.supports(CAP_DISPENSE_PORTIONS):
@@ -257,6 +263,33 @@ class PetlibroMotorCurrentSensor(PetlibroEntity, SensorEntity):
                 stamp / 1000, datetime.timezone.utc
             ).isoformat()
         return attrs
+
+
+class PetlibroCameraLightStateSensor(PetlibroEntity, SensorEntity):
+    """Whether the camera considers itself in day or night conditions.
+
+    Extracted from errorCode 2048, which the device sends on the ERROR_EVENT
+    channel a few times an hour despite not being a fault - it carries the
+    camera's auto-exposure state. Surfacing it here is what lets the error
+    surface stay quiet without the information being thrown away.
+    """
+
+    _attr_name = "Camera Light State"
+    _attr_icon = "mdi:theme-light-dark"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    @property
+    def unique_id(self) -> str:
+        return f"{self._device.serial}_camera_light_state"
+
+    @property
+    def native_value(self):
+        return self.coordinator.data.get("camera_light_state")
+
+    @property
+    def extra_state_attributes(self):
+        level = self.coordinator.data.get("camera_ir_led_level")
+        return {"ir_led_level": level} if level is not None else {}
 
 
 class PetlibroBowlModeSensor(PetlibroEntity, SensorEntity):

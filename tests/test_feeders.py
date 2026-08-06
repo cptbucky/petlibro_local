@@ -1024,3 +1024,45 @@ def test_always_mode_ignores_an_expired_window():
     f.receive(cmd="ATTR_PUSH_EVENT", enableLight=True)
     assert f.device.state["light_aging_type"] == 1
     assert f.device.state["enable_light"] is True
+
+
+# --- the error channel carries things that are not errors ------------------
+
+
+def test_camera_exposure_telemetry_does_not_reach_the_error_surface():
+    """errorCode 2048 arrived 55 times in 19 hours, every one carrying
+    "state:Day usual" or "state:Night usual". Left in the error path it pins
+    the Error Code sensor and fires the Error event a few times an hour, so a
+    real fault would be buried."""
+    f = Feeder(DRY)
+    f.receive(
+        cmd="ERROR_EVENT", errorCode=2048, triggerTime=1786008288000,
+        extend="AGain:1024,DGain:1216,ISPGain:1100,u32ISO:127,u32ExpTime:29985,"
+               "s16HistError:-2,state:Day usual expinfo ir led level: 0",
+    )
+    assert "error_code" not in f.device.state
+    assert f.device.state["camera_light_state"] == "Day usual"
+    assert f.device.state["camera_ir_led_level"] == 0
+    # Still acknowledged: the device expects that either way.
+    assert "ERROR_EVENT" in f.commands
+
+
+def test_a_real_error_code_still_reaches_the_error_surface():
+    f = Feeder(DRY)
+    f.receive(cmd="ERROR_EVENT", errorCode=2030, triggerTime=1786008288000)
+    assert f.device.state["error_code"] == 2030
+
+
+def test_night_state_and_ir_level_are_parsed():
+    f = Feeder(DRY)
+    f.receive(cmd="ERROR_EVENT", errorCode=2048,
+              extend="ISPGain:1100,state:Night usual expinfo ir led level: 3")
+    assert f.device.state["camera_light_state"] == "Night usual"
+    assert f.device.state["camera_ir_led_level"] == 3
+
+
+def test_a_malformed_extend_is_survivable():
+    f = Feeder(DRY)
+    f.receive(cmd="ERROR_EVENT", errorCode=2048, extend="nothing useful here")
+    assert "error_code" not in f.device.state
+    assert "camera_light_state" not in f.device.state

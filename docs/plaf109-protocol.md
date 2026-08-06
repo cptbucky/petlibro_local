@@ -497,6 +497,30 @@ attribute set costs 48 needless round trips a day.
 
 The reliable restart signal is the heartbeat `count` going backwards.
 
+## The error channel carries things that are not errors
+
+**Measured 2026-08-06 on the PLAF203.** `ERROR_EVENT` with `errorCode 2048`
+arrived 55 times in 19 hours — two or three an hour, around the clock — and
+none of them was a fault:
+
+```
+{"errorCode": 2048, "triggerTime": ..., "extend":
+ "AGain:1024,DGain:1216,ISPGain:1100,u32ISO:127,u32ExpTime:29985,
+  s16HistError:-2,state:Day usual expinfo ir led level: 0"}
+```
+
+The `state:` field read `Day usual` 16 times and `Night usual` 27 — routine
+camera auto-exposure telemetry. Petlibro evidently uses the error channel as a
+general pipe rather than strictly for faults.
+
+Left in the error path this pins an error-code sensor at 2048 permanently and
+fires an error event a few times an hour, which buries any real fault. The two
+readable fields — the day/night state and the IR LED level — are worth keeping;
+the gain and exposure figures change constantly and mean nothing without the
+sensor's datasheet.
+
+The wet feeder sent no `ERROR_EVENT` at all in the same period.
+
 ## Response codes
 
 | Code | Meaning |

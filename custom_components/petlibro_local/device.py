@@ -26,6 +26,7 @@ from .const import (
     CMD_NTP_SYNC,
     CMD_RESET,
     CODE_OK,
+    NON_FAULT_ERROR_CODES,
     HEARTBEAT_INTERVAL_SEC,
     HEARTBEAT_WATCHDOG_SEC,
     NTP_DRIFT_THRESHOLD_SEC,
@@ -49,6 +50,41 @@ from .protocol.topics import PetlibroTopics
 _LOGGER = logging.getLogger(__name__)
 
 StateCallback = Callable[["PetlibroDevice"], None]
+
+
+def _camera_state_from_extend(extend: Any) -> dict[str, Any]:
+    """Pull the readable bits out of a camera telemetry `extend` string.
+
+    Observed shape (errorCode 2048, PLAF203):
+
+        AGain:1024,DGain:1216,ISPGain:1100,u32ISO:127,u32ExpTime:29985,
+        s16HistError:-2,state:Day usual expinfo ir led level: 0
+
+    Only the two human-meaningful fields are kept - whether the camera thinks
+    it is in day or night, and the IR LED level. The gain and exposure numbers
+    are left alone: they change constantly and mean nothing without the
+    sensor's datasheet.
+    """
+    if not isinstance(extend, str) or not extend:
+        return {}
+    out: dict[str, Any] = {}
+
+    marker = "state:"
+    if marker in extend:
+        rest = extend.split(marker, 1)[1]
+        # "Day usual expinfo ir led level: 0" -> "Day usual"
+        state = rest.split(" expinfo", 1)[0].strip()
+        if state:
+            out["camera_light_state"] = state
+
+    marker = "ir led level:"
+    if marker in extend:
+        raw = extend.split(marker, 1)[1].strip().split()[0] if extend.split(marker, 1)[1].strip() else ""
+        try:
+            out["camera_ir_led_level"] = int(raw)
+        except (ValueError, IndexError):
+            pass
+    return out
 
 
 class PetlibroDevice:
@@ -354,17 +390,33 @@ class PetlibroDevice:
             )
 
     async def _handle_error_event(self, payload: dict) -> None:
-        """Device reported an error."""
+        """Device reported an error - or, for some codes, did not.
+
+        Camera models send routine auto-exposure telemetry on this channel
+        under errorCode 2048. Treating it as a fault pins the Error Code sensor
+        and fires the Error event a few times an hour forever, which buries any
+        real fault. Those codes are acknowledged and recorded as camera state
+        instead. See NON_FAULT_ERROR_CODES.
+        """
         msg_id = payload.get("msgId")
         error_code = payload.get("errorCode", "unknown")
-        _LOGGER.warning("Device %s error: %s", self.serial, error_code)
 
-        # Acknowledge
+        # Acknowledge regardless: the device expects it either way.
         await self._publish(
             self.topics.event_sub,
             build_response(CMD_ERROR_EVENT, msg_id),
         )
 
+        if error_code in NON_FAULT_ERROR_CODES:
+            _LOGGER.debug(
+                "Device %s sent non-fault code %s on the error channel",
+                self.serial, error_code,
+            )
+            self.state.update(_camera_state_from_extend(payload.get("extend")))
+            self._notify_state_changed()
+            return
+
+        _LOGGER.warning("Device %s error: %s", self.serial, error_code)
         state_update = normalize_payload(payload, self.profile.FIELDS)
         self.state.update(state_update)
         self._notify_state_changed()

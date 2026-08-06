@@ -161,6 +161,21 @@ CODE_ERROR_DEVICE_NOT_BOUND = 2030
 # planId: the device refuses cleanly and does not actuate.
 CODE_ERROR_PLAN_NOT_FOUND = 2050
 
+# --- ERROR_EVENT codes that are not errors ---
+# 2048 arrives on the ERROR_EVENT channel from camera models but reports
+# routine auto-exposure state, not a fault. Measured 2026-08-06: 55 of them in
+# 19 hours, two or three every hour around the clock, every one carrying
+# "state:Day usual" (x16) or "state:Night usual" (x27) in its extend field
+# alongside ISP gain and IR LED level. Petlibro evidently uses the error
+# channel as a general telemetry pipe.
+#
+# Left in the error path it pins the Error Code sensor at 2048 permanently and
+# fires the Error event ~55 times a day, so any automation watching for a real
+# fault is woken by the camera noticing dusk. It is routed to a camera-state
+# diagnostic instead - suppressed from the error surface, not discarded.
+ERROR_CODE_CAMERA_EXPOSURE = 2048
+NON_FAULT_ERROR_CODES = frozenset({ERROR_CODE_CAMERA_EXPOSURE})
+
 # Entity platforms
 PLATFORMS = [
     "sensor",
