@@ -836,3 +836,67 @@ def test_a_heartbeat_counter_reset_still_counts_as_a_restart():
     f.sent.clear()
     f.receive(cmd="HEARTBEAT", count=3, rssi=-50, wifiType=1)
     assert "ATTR_GET_SERVICE" in f.commands
+
+
+# --- motor current, from the device's own diagnostic log -------------------
+#
+# Payloads copied verbatim from DEVICE_LOG_REPORT_EVENT captured 2026-08-06.
+
+
+def test_motor_currents_are_extracted_from_the_log_report():
+    """The device reports door and plate motor current in the same units as
+    the doorStuckCurrent / plateStuckCurrent thresholds it publishes. The
+    handler used to discard the whole payload."""
+    f = Feeder(WET)
+    f.receive(cmd="DEVICE_LOG_REPORT_EVENT", logs=[
+        {"type": "sensor", "content": "io:19 state:0", "time": 1785942001000},
+        {"type": "adc", "content": "door_adc=81", "time": 1785942003000},
+        {"type": "adc", "content": "door_adc=71", "time": 1785942004000},
+        {"type": "adc", "content": "plate_adc=523", "time": 1785942005000},
+    ])
+    # Latest reading of each wins, by the log's own timestamp.
+    assert f.device.state["door_motor_current"] == 71
+    assert f.device.state["plate_motor_current"] == 523
+    assert f.device.state["door_motor_current_time"] == 1785942004000
+
+
+def test_out_of_order_log_entries_keep_the_newest_reading():
+    f = Feeder(WET)
+    f.receive(cmd="DEVICE_LOG_REPORT_EVENT", logs=[
+        {"type": "adc", "content": "door_adc=90", "time": 2000},
+        {"type": "adc", "content": "door_adc=40", "time": 1000},
+    ])
+    assert f.device.state["door_motor_current"] == 90
+
+
+def test_an_empty_log_report_changes_nothing():
+    """37 of 44 reports carried no entries at all."""
+    f = Feeder(WET)
+    f.receive(cmd="DEVICE_LOG_REPORT_EVENT", logs=[])
+    assert "door_motor_current" not in f.device.state
+
+
+def test_unparseable_log_entries_are_skipped_not_fatal():
+    f = Feeder(WET)
+    f.receive(cmd="DEVICE_LOG_REPORT_EVENT", logs=[
+        {"type": "adc", "content": "door_adc=notanumber", "time": 1},
+        {"type": "adc", "content": "malformed", "time": 2},
+        {"type": "net", "content": "discon=8", "time": 3},
+        {"type": "sensor", "content": "Microtime=203", "time": 4},
+        {"type": "adc", "content": "door_adc=55", "time": 5},
+    ])
+    assert f.device.state["door_motor_current"] == 55
+
+
+def test_the_stall_threshold_is_published_but_not_alarmed_on():
+    """A healthy plate rotation drew 523 against a threshold of 400 - starting
+    torque exceeds running torque. Deriving a fault from that comparison would
+    fire on every normal feed."""
+    f = Feeder(WET)
+    f.receive(cmd="ATTR_PUSH_EVENT", plateStuckCurrent=400, doorStuckCurrent=400)
+    f.receive(cmd="DEVICE_LOG_REPORT_EVENT",
+              logs=[{"type": "adc", "content": "plate_adc=523", "time": 1}])
+    assert f.device.state["plate_stuck_current"] == 400
+    assert f.device.state["plate_motor_current"] == 523
+    # No derived fault state exists, deliberately.
+    assert "plate_jammed" not in f.device.state

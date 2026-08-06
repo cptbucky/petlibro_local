@@ -307,8 +307,69 @@ async def _handle_config_sync(device: Any, payload: dict) -> None:
     _LOGGER.debug("Device %s config sync acknowledged", device.serial)
 
 
+#: Log keys worth keeping, mapped to state. The device reports motor current
+#: for the two things that physically jam on this model.
+_LOG_ADC_KEYS = {
+    "door_adc": "door_motor_current",
+    "plate_adc": "plate_motor_current",
+}
+
+
 async def _handle_log_report(device: Any, payload: dict) -> None:
-    _LOGGER.debug("Device %s log report: %s", device.serial, payload.get("msgId"))
+    """Extract motor currents from the device's diagnostic log.
+
+    DEVICE_LOG_REPORT_EVENT carries a batch of internal log lines. Most are
+    noise, but `adc` entries report the current drawn by the door and plate
+    motors while they move, in the same units as the `doorStuckCurrent` and
+    `plateStuckCurrent` attributes the device already publishes (both 400).
+
+    That makes them the one signal that leads a jam rather than following it:
+    this model's documented failure is a misseated plate that makes feeds
+    silently not happen, and a door growing stiff shows up as rising current
+    before it stops moving at all.
+
+    Two caveats the entities must not paper over:
+
+    * **These are historical.** Entries are batched and uploaded on the
+      device's 30 minute cycle, so a reading can be that old. The log's own
+      `time` field is kept alongside the value.
+    * **Exceeding the threshold is not itself a fault.** A normal plate
+      rotation was observed drawing 523 against a threshold of 400 - breakaway
+      torque on starting. Only the firmware knows how it qualifies a stall, so
+      no alarm is derived here; the readings are published and left to the
+      user's judgement.
+    """
+    logs = payload.get("logs") or []
+    latest: dict[str, tuple[int, int]] = {}
+    for entry in logs:
+        if not isinstance(entry, dict) or entry.get("type") != "adc":
+            continue
+        content = str(entry.get("content", ""))
+        key, _, raw = content.partition("=")
+        state_key = _LOG_ADC_KEYS.get(key.strip())
+        if state_key is None:
+            continue
+        try:
+            value = int(raw.strip())
+        except ValueError:
+            continue
+        stamp = entry.get("time") or 0
+        # Entries arrive in order, but do not rely on it.
+        if state_key not in latest or stamp >= latest[state_key][1]:
+            latest[state_key] = (value, stamp)
+
+    if not latest:
+        _LOGGER.debug("Device %s log report: %s", device.serial, payload.get("msgId"))
+        return
+
+    update = {}
+    for state_key, (value, stamp) in latest.items():
+        update[state_key] = value
+        if stamp:
+            update[f"{state_key}_time"] = stamp
+    device.state.update(update)
+    device._notify_state_changed()
+    _LOGGER.debug("Device %s motor currents: %s", device.serial, update)
 
 
 # Attributes worth polling explicitly; zeroState is the one that explains a

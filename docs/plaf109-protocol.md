@@ -332,6 +332,47 @@ on a local broker during a scheduled feed. That is likely the same measurement
 problem, but it has not been proven either way, so anything depending on feed
 progress should be verified before being relied upon.
 
+## Device log report
+
+**Measured 2026-08-06.** `DEVICE_LOG_REPORT_EVENT` arrives on the 30 minute
+cycle carrying a `logs` array, usually empty — 37 of 44 reports had nothing.
+The entries that do appear are the most useful diagnostics this model offers,
+and every one observed correlated with a feed phase:
+
+| `type` | `content` | Meaning |
+|---|---|---|
+| `sensor` | `io:19 state:0/1` | Door position sensor: 0 as it starts moving, 1 once settled |
+| `sensor` | `io:10 state:0/1` | Plate position sensor, during rotation |
+| `sensor` | `Microtime=203` | Duration of the movement, ms |
+| `adc` | `door_adc=71` | Door motor current |
+| `adc` | `plate_adc=523` | Plate motor current |
+| `net` | `discon=8` | Disconnect count |
+| `mqtt` | `MQTT_CONNECT_ERR` | Broker connection failure |
+
+The `adc` values are in the **same units as the `doorStuckCurrent` and
+`plateStuckCurrent` attributes** the device publishes, both `400` here. That
+makes them the one signal that *leads* a jam rather than following it: this
+model's documented failure is a misseated plate producing feeds that silently
+never happen, and a stiffening mechanism shows as rising current first.
+
+Observed ranges over a healthy cycle:
+
+```
+door_adc    46, 57, 66, 70, 71, 81, 86        threshold 400
+plate_adc   109, 121, 138, 523                threshold 400
+```
+
+Two things to be careful of:
+
+- **Exceeding the threshold is not a fault.** A perfectly normal plate rotation
+  drew `523` against a threshold of `400` — starting torque exceeds running
+  torque. Only the firmware knows how it qualifies a stall, so deriving an
+  alarm from a single reading against the threshold would fire on every feed.
+- **The readings are historical.** Entries are batched and uploaded on the
+  device's own 30 minute cycle, and the gap between an entry's `time` and the
+  report carrying it was up to 26 minutes. Anything presenting these as live is
+  lying; keep the entry's own timestamp.
+
 ## Liveness and cadence
 
 **Measured 2026-08-06**, over 19 hours of vendor traffic on a TCP session that

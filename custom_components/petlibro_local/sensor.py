@@ -87,6 +87,14 @@ async def async_setup_entry(
             PetlibroPlatePositionSensor(coordinator),
             PetlibroFeedingStepSensor(coordinator),
             PetlibroPlateHomingSensor(coordinator),
+            PetlibroMotorCurrentSensor(
+                coordinator, "Door Motor Current", "door_motor_current",
+                "door_stuck_current",
+            ),
+            PetlibroMotorCurrentSensor(
+                coordinator, "Plate Motor Current", "plate_motor_current",
+                "plate_stuck_current",
+            ),
         ]
 
     async_add_entities(entities)
@@ -202,6 +210,53 @@ class PetlibroTemperatureSensor(PetlibroEntity, SensorEntity):
     @property
     def native_value(self):
         return self.coordinator.data.get("temperature")
+
+
+class PetlibroMotorCurrentSensor(PetlibroEntity, SensorEntity):
+    """Current drawn by the door or plate motor on its last movement.
+
+    Reported in the device's own diagnostic log, in the same units as the
+    `doorStuckCurrent` / `plateStuckCurrent` thresholds it publishes. Rising
+    values across feeds indicate a mechanism stiffening before it actually
+    jams, which on this model otherwise presents only as feeds silently not
+    happening.
+
+    Two things this entity deliberately does not do. It does not alarm on
+    exceeding the threshold - a healthy plate rotation was measured at 523
+    against a threshold of 400, because starting torque is higher than running
+    torque, so only the firmware knows what qualifies as a stall. And it does
+    not pretend to be live: the device batches these and uploads them on its
+    own 30 minute cycle, so `measured_at` carries the reading's real age.
+    """
+
+    _attr_icon = "mdi:flash"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_state_class = SensorStateClass.MEASUREMENT
+
+    def __init__(self, coordinator, name: str, state_key: str, threshold_key: str):
+        super().__init__(coordinator)
+        self._attr_name = name
+        self._state_key = state_key
+        self._threshold_key = threshold_key
+
+    @property
+    def unique_id(self) -> str:
+        return f"{self._device.serial}_{self._state_key}"
+
+    @property
+    def native_value(self):
+        return self.coordinator.data.get(self._state_key)
+
+    @property
+    def extra_state_attributes(self):
+        data = self.coordinator.data
+        attrs = {"stall_threshold": data.get(self._threshold_key)}
+        stamp = data.get(f"{self._state_key}_time")
+        if stamp:
+            attrs["measured_at"] = datetime.datetime.fromtimestamp(
+                stamp / 1000, datetime.timezone.utc
+            ).isoformat()
+        return attrs
 
 
 class PetlibroBowlModeSensor(PetlibroEntity, SensorEntity):
