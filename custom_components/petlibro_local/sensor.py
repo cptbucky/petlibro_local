@@ -27,6 +27,7 @@ from .const import (
     CAP_TEMPERATURE,
 )
 from .entity import PetlibroEntity
+from .timeutil import utc_to_local_12h, utc_to_local_hhmm
 from .coordinator import PetlibroCoordinator
 
 DAY_NAMES = {
@@ -367,19 +368,6 @@ class PetlibroSdCardUsedSensor(PetlibroEntity, SensorEntity):
         return self.coordinator.data.get("sd_card_used_capacity")
 
 
-def _format_time_12h(time_str: str) -> str:
-    """Render a local HH:MM plan time as h:MM AM/PM.
-
-    There is no timezone conversion here any more. executionTime is wall-clock
-    time in the device's timezone, which the NTP reply sets to ours, so the
-    stored value is already local. The previous UTC->local step shifted every
-    displayed time by the local offset.
-    """
-    try:
-        h, m = map(int, time_str.split(":"))
-        return datetime.time(h, m).strftime("%-I:%M %p")
-    except (ValueError, AttributeError):
-        return time_str
 
 
 def _next_feed_time(plans: list[dict]) -> str | None:
@@ -410,8 +398,8 @@ def _next_feed_time(plans: list[dict]) -> str | None:
                 feed_dt = datetime.datetime.combine(
                     now.date() + datetime.timedelta(days=offset),
                     datetime.time(h, m),
-                    tzinfo=now.tzinfo,
-                )
+                    tzinfo=datetime.timezone.utc,
+                ).astimezone()
 
                 if feed_dt > now:
                     candidates.append(feed_dt)
@@ -459,7 +447,7 @@ class PetlibroFeedingScheduleSensor(PetlibroEntity, SensorEntity):
 
         for i, plan in enumerate(plans):
             slot = plan.get("planId", i + 1)
-            local_time = _format_time_12h(plan.get("executionTime", ""))
+            local_time = utc_to_local_12h(plan.get("executionTime", ""))
             days = _format_days(plan.get("repeatDay", []))
             audio = "Yes" if plan.get("enableAudio", True) else "No"
 
@@ -478,8 +466,9 @@ class PetlibroFeedingScheduleSensor(PetlibroEntity, SensorEntity):
         attrs["plans"] = [
             {
                 "slot": plan.get("planId", i + 1),
-                "time_local": plan.get("executionTime", ""),
-                "time_display": _format_time_12h(plan.get("executionTime", "")),
+                "time_utc": plan.get("executionTime", ""),
+                "time_local": utc_to_local_hhmm(plan.get("executionTime", "")),
+                "time_display": utc_to_local_12h(plan.get("executionTime", "")),
                 "days": [d for d in plan.get("repeatDay", []) if d > 0],
                 "audio": plan.get("enableAudio", True),
                 # Only the keys this model actually has. The card

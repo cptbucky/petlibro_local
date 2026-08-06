@@ -89,7 +89,7 @@ class PetlibroFeedingCard extends HTMLElement {
   // Short label for a plan's amount, used in lists and calendar cells.
   _amountLabel(plan) {
     if (this._isPlateFeeder) {
-      const mins = plan.duration ? ` \u00b7 ${Math.round(plan.duration / 60)}m` : '';
+      const mins = plan.duration ? ` \u00b7 ${plan.duration}m` : '';
       return `Plate ${plan.plate ?? '?'}${mins}`;
     }
     const n = plan.portions ?? 0;
@@ -330,9 +330,8 @@ class PetlibroFeedingCard extends HTMLElement {
     const time = d.time || existingPlan?.time_local || '08:00';
     const portions = d.portions ?? existingPlan?.portions ?? 1;
     const plate = d.plate ?? existingPlan?.plate ?? 1;
-    // plan.duration is seconds on the wire; the editor works in minutes.
-    const duration = d.duration
-      ?? (existingPlan?.duration ? Math.round(existingPlan.duration / 60) : 4);
+    // plan.duration is minutes on the wire, same unit the editor uses.
+    const duration = d.duration ?? existingPlan?.duration ?? 4;
     const days = d.days || (existingPlan?.days?.length > 0 ? [...existingPlan.days] : [1,2,3,4,5,6,7]);
     const audio = d.audio ?? existingPlan?.audio ?? true;
 

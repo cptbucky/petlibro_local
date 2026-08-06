@@ -109,9 +109,12 @@ ZERO_STATE_PROCESSING = "PROCESSING"
 ZERO_STATE_SUCCESS = "SUCCESS"
 ZERO_STATE_TIMEOUT = "TIMEOUT"
 
-# Feed duration. The wire format is seconds, but users think in minutes, so
-# every UI works in minutes and converts at the service boundary.
-DEFAULT_WET_FEEDING_DURATION = 240  # seconds
+# Feed duration. The wire carries MINUTES, not seconds - measured 2026-08-06
+# from a scheduled feed whose plan said 120 and whose door stood open from
+# 21:00:06Z to 23:00:12Z, i.e. 120 minutes. The UI also works in minutes, so
+# nothing converts. Treating the wire as seconds multiplied every duration by
+# 60: a 4-minute feed held the door open for 4 hours.
+DEFAULT_WET_FEEDING_DURATION = 240  # minutes (4h); vendor plans used 120-210
 WET_FEEDING_MIN_MINUTES = 1
 WET_FEEDING_MAX_MINUTES = 240  # 4 hours
 

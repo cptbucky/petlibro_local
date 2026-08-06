@@ -584,11 +584,11 @@ def test_close_door_is_a_feed_step_and_is_not_the_end_of_the_cycle():
     assert f.device.state["wet_finished"] is True
 
 
-# --- timezone: why scheduled feeds ran at the wrong hour --------------------
+# --- timezone and duration, measured from a real feed ----------------------
 #
-# A wet plan's executionTime is wall-clock time in the *device's* timezone, and
-# the NTP response is the only channel that tells the device what that is. The
-# expected values below are copied from vendor traffic captured 2026-08-05.
+# Captured 2026-08-06. Plan 44456688 read executionTime "21:00",
+# feedingDuration 120. The device began the cycle at 21:00:01Z and held the
+# door open from 21:00:06Z to 23:00:12Z. Both facts below come from that trace.
 
 import os  # noqa: E402
 import time as _time  # noqa: E402
@@ -597,7 +597,7 @@ from custom_components.petlibro_local.protocol import codec  # noqa: E402
 
 
 class london:
-    """Pin the process to Europe/London so DST assertions are deterministic."""
+    """Pin the process to Europe/London so the assertions are deterministic."""
 
     def __enter__(self):
         self._old = os.environ.get("TZ")
@@ -612,77 +612,62 @@ class london:
         _time.tzset()
 
 
-# 2026-08-05 14:34 UTC — the moment of the capture, during BST.
-CAPTURE_TS = 1785940462
-
-
-def test_ntp_response_carries_the_offset_the_firmware_actually_uses():
-    """Sending only `timezone` left the device on UTC, so a plan entered as
-    17:00 fired at 17:00 UTC — an hour late in BST. The vendor sends
-    timezoneOffsetSeconds and that is what the firmware honours."""
+def test_ntp_reply_does_not_claim_a_timezone_offset():
+    """0.2.3 sent timezoneOffsetSeconds and the DST transition block, copying
+    the vendor. That was wrong twice over: plan times are UTC so scheduling
+    does not depend on the device's offset, and this process runs in a
+    container whose clock is UTC - so we would have told the feeder it was on
+    UTC while the vendor had correctly told it otherwise."""
     with london():
         msg = json.loads(codec.build_ntp_response())
-    assert msg["timezoneOffsetSeconds"] == 3600
-    assert msg["timezone"] == 1
-    # An integer on the wire, as the vendor sends — not 1.0.
-    assert isinstance(msg["timezone"], int)
+    for field in (
+        "timezoneOffsetSeconds",
+        "nextDSTOffsetSeconds",
+        "nextDSTTransitionTs",
+        "secondNextDSTOffsetSeconds",
+        "secondNextDSTTransitionTs",
+    ):
+        assert field not in msg, field
 
 
-def test_ntp_sync_carries_the_same_timezone_block():
-    with london():
-        msg = json.loads(codec.build_ntp_sync())
-    assert msg["timezoneOffsetSeconds"] == 3600
-
-
-def test_next_two_dst_transitions_match_the_vendor():
-    """The vendor preloads the next two transitions so the device adjusts
-    itself when the clocks change. These are the exact values it sent."""
-    with london():
-        transitions = codec.next_dst_transitions(CAPTURE_TS, count=2)
-    assert transitions == [
-        (1792890000, 0),      # 2026-10-25 01:00 UTC, BST -> GMT
-        (1806195600, 3600),   # 2027-03-28 01:00 UTC, GMT -> BST
+def test_feed_now_duration_is_minutes_not_seconds():
+    """The wire carries minutes. Converting the user's minutes to seconds held
+    the door open 60x too long - a 4-minute feed became 4 hours on a
+    refrigerated feeder."""
+    f = Feeder(WET)
+    f.device.feeding_plans = [
+        {"planId": 7, "plate": 1, "feedingDuration": 120},
     ]
+    f.run(f.device.serve_plate(1))
+    _, msg = f.last()
+    assert msg["feedingDuration"] == 120
 
 
-def test_timezone_payload_matches_the_captured_vendor_payload():
-    with london():
-        payload = codec.timezone_payload(CAPTURE_TS)
-    assert payload == {
-        "timezoneOffsetSeconds": 3600,
-        "timezone": 1,
-        "nextDSTTransitionTs": 1792890000000,
-        "nextDSTOffsetSeconds": 0,
-        "secondNextDSTTransitionTs": 1806195600000,
-        "secondNextDSTOffsetSeconds": 3600,
-    }
+def test_plan_duration_reaches_the_wire_unmultiplied():
+    f = Feeder(WET)
+    f.run(f.device.set_feeding_plans([
+        {"planId": 1, "plate": 1, "executionTime": "21:00", "feedingDuration": 120},
+    ]))
+    _, msg = f.last()
+    assert msg["plans"][0]["feedingDuration"] == 120
 
 
-def test_a_zone_without_dst_omits_the_transition_fields():
-    """Sending a transition timestamp of 0 would be worse than sending none."""
-    old = os.environ.get("TZ")
-    os.environ["TZ"] = "UTC"
-    _time.tzset()
-    try:
-        payload = codec.timezone_payload(CAPTURE_TS)
-    finally:
-        if old is None:
-            del os.environ["TZ"]
-        else:
-            os.environ["TZ"] = old
-        _time.tzset()
-    assert payload == {"timezoneOffsetSeconds": 0, "timezone": 0}
+def test_duration_bounds_are_minutes_on_the_wire():
+    """WET_FEEDING_MAX_MINUTES is 240. Under the old x60 that reached the
+    device as 14400, which it would have read as 14400 minutes - ten days."""
+    assert const.WET_FEEDING_MAX_MINUTES == 240
+    f = Feeder(WET)
+    f.device.feeding_plans = [
+        {"planId": 9, "plate": 1, "feedingDuration": const.WET_FEEDING_MAX_MINUTES},
+    ]
+    f.run(f.device.serve_plate(1))
+    assert f.last()[1]["feedingDuration"] == 240
 
 
-# --- plan times are local, end to end --------------------------------------
+# --- plan times are UTC on the wire ----------------------------------------
 #
-# executionTime is wall-clock time in the *device's* timezone, and the NTP
-# reply sets that timezone to ours. The integration used to convert local->UTC
-# on write and back on display, which was self-consistent only while the device
-# was left on UTC. Now that the offset is sent, no conversion may happen.
-
-BST = datetime.timezone(datetime.timedelta(hours=1))
-
+# The integration converts local->UTC at its edges. The profile layer must not
+# convert again, so a time handed to it reaches the wire untouched.
 
 def test_plan_time_reaches_the_wire_unchanged():
     """No conversion between what the user picked and what is sent. A local
@@ -706,20 +691,9 @@ def test_dry_plan_time_also_reaches_the_wire_unchanged():
     assert msg["plans"][0]["executionTime"] == "07:30"
 
 
-def test_the_next_day_rolls_on_the_local_clock_not_utc():
-    """The case the old UTC comparison got wrong.
-
-    At 00:45 BST on Tuesday the 4th, a plan for 00:30 has already passed and
-    belongs on the 5th. The same instant is 23:45 UTC on Monday the 3rd, where
-    00:30 still looks like it is yet to come - so the plan would be dated the
-    4th and fire a day early.
-    """
-    local_now = datetime.datetime(2026, 8, 4, 0, 45, tzinfo=BST)
-    assert next_execution_day("00:30", [1, 2, 3, 4, 5, 6, 7], local_now) == "2026-08-05"
-
-    utc_same_instant = local_now.astimezone(datetime.timezone.utc)
-    assert utc_same_instant.date().isoformat() == "2026-08-03"
-    # Demonstrates the divergence rather than asserting the old behaviour is ok.
-    assert next_execution_day(
-        "00:30", [1, 2, 3, 4, 5, 6, 7], utc_same_instant
-    ) == "2026-08-04"
+def test_the_next_day_is_computed_in_utc_like_the_stored_time():
+    """executionTime is UTC, so the date that pairs with it must be chosen on
+    the same clock. Mixing a UTC plan time with a local clock picks the wrong
+    day either side of midnight."""
+    utc_now = datetime.datetime(2026, 8, 3, 23, 45, tzinfo=datetime.timezone.utc)
+    assert next_execution_day("00:30", [1, 2, 3, 4, 5, 6, 7], utc_now) == "2026-08-04"

@@ -26,92 +26,6 @@ def timezone_offset_hours() -> float:
     return now.utcoffset().total_seconds() / 3600
 
 
-# Two years ahead covers the next two transitions in every zone that has them.
-_DST_SEARCH_DAYS = 730
-_DAY_SECONDS = 86400
-
-
-def _utc_offset_seconds(ts: float) -> int:
-    """UTC offset of the local timezone at `ts`, in seconds.
-
-    Uses `time.localtime`, which consults the tz database for the timestamp
-    given. `datetime.astimezone()` cannot be used here: with no argument it
-    attaches a *fixed* offset taken from the current moment, so it reports
-    today's offset for every future date and would never see a transition.
-    """
-    return time.localtime(ts).tm_gmtoff or 0
-
-
-def next_dst_transitions(
-    now_ts: float | None = None, count: int = 2
-) -> list[tuple[int, int]]:
-    """Find the next `count` UTC-offset changes in the local timezone.
-
-    Returns `(transition_unix_seconds, offset_after_seconds)` pairs, earliest
-    first. Zones without DST return an empty list.
-    """
-    start = int(time.time() if now_ts is None else now_ts)
-    end = start + _DST_SEARCH_DAYS * _DAY_SECONDS
-    current = _utc_offset_seconds(start)
-
-    found: list[tuple[int, int]] = []
-    cursor = start
-    while cursor < end and len(found) < count:
-        probe = min(cursor + _DAY_SECONDS, end)
-        if _utc_offset_seconds(probe) == current:
-            cursor = probe
-            continue
-        # Offset changed somewhere in this day; bisect to the exact second.
-        low, high = cursor, probe
-        while high - low > 1:
-            mid = (low + high) // 2
-            if _utc_offset_seconds(mid) == current:
-                low = mid
-            else:
-                high = mid
-        current = _utc_offset_seconds(high)
-        found.append((high, current))
-        cursor = high
-    return found
-
-
-def timezone_payload(now_ts: float | None = None) -> dict[str, Any]:
-    """The timezone fields the firmware needs to interpret plan times.
-
-    A wet plan's `executionTime` is wall-clock time in the *device's* timezone,
-    and the device learns that timezone from the NTP response - there is no
-    other channel for it. Sending only `timezone` leaves the firmware on UTC,
-    which silently shifts every scheduled feed by the local offset: the user
-    enters 17:00 and the feed runs at 17:00 UTC.
-
-    The DST fields matter for the same reason one step later. The vendor
-    preloads the next two transitions with the offset that follows each, so the
-    device adjusts itself when the clocks change. Without them a correct offset
-    today drifts by an hour at the next transition.
-
-    Offsets come from the system timezone, matching the rest of this module.
-    """
-    offset = _utc_offset_seconds(time.time() if now_ts is None else now_ts)
-    hours = offset / 3600
-    payload: dict[str, Any] = {
-        "timezoneOffsetSeconds": offset,
-        # The vendor sends a whole number here; keep the wire shape identical
-        # rather than emitting 1.0 where it emits 1.
-        "timezone": int(hours) if offset % 3600 == 0 else hours,
-    }
-
-    transitions = next_dst_transitions(now_ts, count=2)
-    if transitions:
-        ts, after = transitions[0]
-        payload["nextDSTTransitionTs"] = ts * 1000
-        payload["nextDSTOffsetSeconds"] = after
-    if len(transitions) > 1:
-        ts, after = transitions[1]
-        payload["secondNextDSTTransitionTs"] = ts * 1000
-        payload["secondNextDSTOffsetSeconds"] = after
-    return payload
-
-
 def build_response(cmd: str, msg_id: str | None = None, code: int = 0, **extra) -> str:
     """Build a JSON response payload to send to the device."""
     payload: dict[str, Any] = {
@@ -141,15 +55,19 @@ def build_command(cmd: str, **kwargs) -> str:
 def build_ntp_response(calibrate: bool = False) -> str:
     """Build NTP response with current time and timezone.
 
-    The timezone block is what makes scheduled feeds fire at the right
-    wall-clock time - see `timezone_payload`.
+    Deliberately does NOT send timezoneOffsetSeconds or the DST transition
+    fields the vendor sends. Captured traffic (2026-08-06) shows executionTime
+    is interpreted as UTC, so plan scheduling does not depend on the device's
+    offset, and this process runs in a container whose clock is UTC - we would
+    be telling the device it is on UTC while the vendor told it otherwise.
+    Sending a worse answer than the one it already has helps nobody.
     """
     return json.dumps({
         "cmd": "NTP",
         "ts": timestamp_now_ms(),
         "code": 0,
         "calibrationTag": calibrate,
-        **timezone_payload(),
+        "timezone": timezone_offset_hours(),
     })
 
 
@@ -159,7 +77,7 @@ def build_ntp_sync() -> str:
         "cmd": "NTP_SYNC",
         "msgId": generate_msg_id(),
         "ts": timestamp_now_ms(),
-        **timezone_payload(),
+        "timezone": timezone_offset_hours(),
     })
 
 
@@ -172,8 +90,9 @@ def build_wet_feed_now(plan_id: int, feeding_duration: int) -> str:
     """Build immediate feed command for wet food feeders.
 
     Unlike the dry-feeder command this takes no quantity: a wet feeder rotates
-    its plate and holds the door open for feeding_duration seconds. It also
-    requires an existing plan_id - the device borrows that plan's plate, so
+    its plate and holds the door open for feeding_duration MINUTES - the wire
+    carries minutes, not seconds (measured: a plan value of 120 held the door
+    open from 21:00:06Z to 23:00:12Z). It also requires an existing plan_id - the device borrows that plan's plate, so
     there is no way to feed ad-hoc without a plan to reference.
 
     The device only actuates when its plate is homed (zeroState == SUCCESS);

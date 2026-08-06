@@ -45,9 +45,9 @@ Channels in use: `heart`, `ntp`, `config`, `service`, `event`.
 | `PET_DETECT_EVENT` | ← device | `{type: "NEAR" \| "LEAVE"}` |
 | `MACHINE_INFRARED_EVENT` | ← device | `{irState: bool}` |
 
-`NTP` is shared but carries more than a clock: its reply sets the device's
-timezone, which is what `executionTime` in a plan is measured against. See
-[Scheduling](#scheduling) — getting it wrong shifts every scheduled feed.
+`NTP`'s reply carries a timezone block (`timezoneOffsetSeconds` plus DST
+transitions). It does **not** govern plan scheduling — `executionTime` is UTC
+regardless. See [Scheduling](#scheduling).
 
 Shared with other models: `HEARTBEAT`, `NTP`, `ATTR_GET_SERVICE`,
 `ATTR_SET_SERVICE`, `ATTR_PUSH_EVENT`, `DEVICE_START_EVENT`, `ERROR_EVENT`,
@@ -58,9 +58,10 @@ plan-fetch command for this model.
 
 ## Feeding
 
-A wet feed is not a quantity. The firmware runs a multi-second sequence —
-pause refrigeration, rotate to the plate, open the door, close it after
-`feedingDuration` seconds — reporting progress as `execStep`:
+A wet feed is not a quantity, and it is not brief. The firmware pauses
+refrigeration, rotates to the plate, opens the door and shuts it again after
+`feedingDuration` **minutes** — a meal window measured in hours, reported as
+`execStep`:
 
 ```
 GRAIN_THAW -> GRAIN_START -> OPEN_DOOR -> CLOSE_DOOR -> GRAIN_END
@@ -74,6 +75,10 @@ this list. It arrives immediately before `GRAIN_END`, carrying
 CLOSE_DOOR  finished:false  plate:3  feedingDuration:210  execTime:1785940468677
 GRAIN_END   finished:true   plate:3  feedingDuration:210  execTime:1785940468677
 ```
+
+`GRAIN_THAW` arrives **30 minutes before** the scheduled time: refrigeration
+pauses first, then the plate rotates and the door opens at the scheduled
+instant.
 
 Both share one `msgId` and `execTime`, so a feed cycle is correlated by
 `execTime` rather than by message. Anything treating "not GRAIN_END" as "still
@@ -92,6 +97,11 @@ close an open door; the cycle has to complete.
 {"cmd": "WET_FOOD_FEED_NOW_SERVICE", "msgId": "...", "ts": 0,
  "planId": 44122386, "feedingDuration": 240}
 ```
+
+**Measured 2026-08-06.** `feedingDuration` is in **minutes, not seconds**. A
+plan carrying `120` held the door open from 21:00:06Z to 23:00:12Z — 7205
+seconds, i.e. 120.1 minutes. Vendor plans used 120 and 210, so a wet "feed" is
+a meal window of hours rather than a brief dispense.
 
 **Tested.** The command carries no plate — the device resolves one from the
 referenced plan. An unreferenced `planId` is rejected with **`code 2050`** and
@@ -144,52 +154,33 @@ involved. Local scheduling works.
 immediately, without opening the door. This is distinct from feeding and is
 easily mistaken for it.
 
-### Resolved 2026-08-05
+### Resolved
 
-- **`executionTime` is local time, not UTC.** The vendor suffixes its UTC
-  fields explicitly and does not suffix this one — in the same session it sent
-  `lightingStartTimeUtc: "07:00"` and `soundStartTimeUtc: "07:00"` alongside
-  `executionTime: "17:00"`. Converting local → UTC before sending a wet plan
-  would shift every feed by the offset.
+- **`executionTime` is UTC.** Measured 2026-08-06 from a scheduled feed:
 
-  But "local" is whatever the device has been *told*, and the NTP reply is the
-  only channel that tells it:
-
-  ```json
-  {"cmd": "NTP", "ts": ..., "code": 0, "calibrationTag": false,
-   "timezoneOffsetSeconds": 3600,
-   "nextDSTOffsetSeconds": 0,          "nextDSTTransitionTs": 1792890000000,
-   "secondNextDSTOffsetSeconds": 3600, "secondNextDSTTransitionTs": 1806195600000,
-   "timezone": 1}
+  ```
+  plan 44456688   executionTime "21:00"   executionDay 2026-08-05
+  GRAIN_THAW      20:30:01Z    (30 min pre-thaw)
+  GRAIN_START     21:00:01Z    <- fires at 21:00 UTC, which was 22:00 BST
   ```
 
-  **`timezoneOffsetSeconds` is the field the firmware honours.** An NTP reply
-  carrying only `timezone` leaves the device on whatever offset it last had,
-  and a plan is then interpreted against that rather than against the user's
-  clock. That was this integration's behaviour until 2026-08-05: it sent
-  `timezone` alone, and users compensated by entering times in UTC. That
-  workaround is how the bug was found, and it is also why the naming-convention
-  argument above looked wrong from the outside — the plan time really is local,
-  but the device's idea of local was never set.
+  An earlier revision of this document claimed the opposite, reasoning from the
+  vendor's naming convention: it suffixes `lightingStartTimeUtc` and
+  `soundStartTimeUtc` but not `executionTime`, which looked like a deliberate
+  distinction. It is not — everything on the wire is UTC and the suffix is
+  merely inconsistent. **One observed feed outweighed the entire argument.**
 
-  Fixing this is *two* changes, and doing only the first makes things worse.
-  Send the offset, **and** stop converting plan times to UTC in the
-  integration: it previously converted local→UTC on write and back on display,
-  which was self-consistent only while the device stayed on UTC. With the
-  offset sent and the conversion still in place, every feed fires an hour early
-  in BST. Plans persisted under the old scheme hold UTC times and need
-  migrating.
+  The device does receive `timezoneOffsetSeconds: 3600` from the vendor on
+  every NTP exchange, but that is a red herring for scheduling: plan times do
+  not depend on it, and an integration should not send its own value unless it
+  can be sure the value is right.
 
-  **The `nextDST*` / `secondNextDST*` fields are not optional either.** The
-  vendor preloads the next two transitions with the offset that applies after
-  each, so the device re-bases itself when the clocks change: `1792890000000`
-  is 2026-10-25 01:00 UTC (BST→GMT), `1806195600000` is 2027-03-28 01:00 UTC
-  (GMT→BST). A correct offset without these drifts by an hour at the next
-  transition.
-
-  *Still worth doing:* time one scheduled feed against the wall clock now that
-  the offset is sent. Everything above is consistent, but no feed has yet been
-  observed firing at a known local time with a correct NTP reply in place.
+  Practical consequence: convert the user's local time to UTC before sending,
+  and back for display. Note that Home Assistant commonly runs in a container
+  with no `TZ` set, where `datetime.now().astimezone()` reports UTC regardless
+  of what the user configured — so that conversion must read Home Assistant's
+  configured timezone, or it silently becomes a no-op and every feed lands an
+  hour out.
 
 - **`executionDay` is server-managed — the integration must roll it forward.**
   Editing a plan's time moved its date without being asked to:

@@ -21,66 +21,69 @@ from .const import (
     WET_FEEDING_MAX_MINUTES,
     WET_FEEDING_MIN_MINUTES,
 )
+from homeassistant.util import dt as dt_util
+
 from .coordinator import PetlibroCoordinator
 from .protocol.codec import timestamp_now_ms
+from .timeutil import local_to_utc_hhmm
 
 _LOGGER = logging.getLogger(__name__)
 
 PetlibroConfigEntry = ConfigEntry
 
 
-def _shift_utc_plan_to_local(time_str: str, offset_minutes: int) -> str:
-    """Reinterpret a stored UTC plan time as the equivalent local wall clock."""
+def _shift_plan_minutes(time_str: str, delta_minutes: int) -> str:
+    """Shift an "HH:MM" plan time by delta_minutes, wrapping at midnight."""
     try:
         h, m = map(int, time_str.split(":"))
     except (ValueError, AttributeError):
         return time_str
-    total = (h * 60 + m + offset_minutes) % (24 * 60)
+    total = (h * 60 + m + delta_minutes) % (24 * 60)
     return f"{total // 60:02}:{total % 60:02}"
 
 
 async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    """Migrate stored plan times from UTC to device-local wall clock.
+    """Bring stored plans back to UTC, and undo the 0.2.3 shift.
 
-    Until v2 the integration converted plan times local->UTC on the way out and
-    back on the way in, which was self-consistent only because the device was
-    left on UTC - the NTP reply never carried timezoneOffsetSeconds. Now that it
-    does, the device reads executionTime in our timezone, so a stored UTC time
-    would fire an hour early in BST.
+    Plan executionTime is UTC on the wire - measured 2026-08-06, a plan reading
+    "21:00" started its feed at 21:00:01Z. Version 2 (released as 0.2.3) acted
+    on the opposite belief and shifted every stored plan into local time, so
+    those entries are now wrong by the offset applied at the time and have to
+    be shifted back.
 
-    The shift uses the offset in force at migration time. A plan is a recurring
-    wall-clock instruction rather than an instant, so there is no single correct
-    offset for one written months ago under a different DST state; the current
-    one is right for the overwhelmingly common case of migrating during the
-    season the plan was created in.
+    Version 1 entries were already storing UTC and need no time change.
     """
-    if entry.version >= 2:
+    if entry.version >= 3:
         return True
 
     plans = entry.options.get(CONF_FEEDING_PLANS, [])
-    if plans:
-        offset = datetime.datetime.now().astimezone().utcoffset()
+
+    if entry.version == 2 and plans:
+        # Undo the local shift v2 applied. It used the offset in force at
+        # migration time and so do we; a plan is a recurring wall-clock
+        # instruction, and any entry migrated and then re-migrated inside the
+        # same DST season round-trips exactly.
+        offset = dt_util.now().utcoffset()
         offset_minutes = int(offset.total_seconds() // 60) if offset else 0
-        migrated = []
-        for plan in plans:
-            p = dict(plan)
-            if p.get("executionTime"):
-                p["executionTime"] = _shift_utc_plan_to_local(
-                    p["executionTime"], offset_minutes
-                )
-            migrated.append(p)
+        plans = [
+            {**p, "executionTime": _shift_plan_minutes(p["executionTime"], -offset_minutes)}
+            if p.get("executionTime") else dict(p)
+            for p in plans
+        ]
         hass.config_entries.async_update_entry(
             entry,
-            options={**entry.options, CONF_FEEDING_PLANS: migrated},
-            version=2,
+            options={**entry.options, CONF_FEEDING_PLANS: plans},
+            version=3,
         )
-        _LOGGER.info(
-            "Migrated %d feeding plan(s) from UTC to local (offset %+d minutes)",
-            len(migrated),
-            offset_minutes,
+        _LOGGER.warning(
+            "Reverted %d feeding plan(s) shifted by 0.2.3 (%+d minutes). "
+            "Plan times are UTC on the wire; 0.2.3 stored them as local. "
+            "Please check your schedule after restarting.",
+            len(plans),
+            -offset_minutes,
         )
     else:
-        hass.config_entries.async_update_entry(entry, version=2)
+        hass.config_entries.async_update_entry(entry, version=3)
 
     return True
 
@@ -184,11 +187,10 @@ def _register_services(hass: HomeAssistant) -> None:
         else:
             h, m = time_val.hour, time_val.minute
 
-        # executionTime is wall-clock time in the *device's* timezone, and the
-        # NTP reply sets that timezone to ours. So the time the user picked
-        # goes on the wire unchanged - converting it to UTC here would shift
-        # every feed by the local offset.
-        execution_time = f"{h:02}:{m:02}"
+        # executionTime is UTC on the wire; the user picked a local time.
+        # This must use Home Assistant's configured timezone rather than the
+        # process's - see timeutil.
+        execution_time = local_to_utc_hhmm(f"{h:02}:{m:02}")
 
         # Build repeat_day array
         if days:
@@ -221,7 +223,9 @@ def _register_services(hass: HomeAssistant) -> None:
             # Presented in minutes; the protocol carries seconds.
             minutes = int(call.data.get("duration", 4))
             minutes = max(WET_FEEDING_MIN_MINUTES, min(WET_FEEDING_MAX_MINUTES, minutes))
-            plan["feedingDuration"] = minutes * 60
+            # The wire carries minutes, not seconds. Multiplying by 60 here
+            # held the door open 60x too long on a refrigerated feeder.
+            plan["feedingDuration"] = minutes
             # The device stores an absolute date, so a plan needs a next
             # occurrence. Whether the firmware advances this itself is
             # unconfirmed - see docs/plaf109-protocol.md.

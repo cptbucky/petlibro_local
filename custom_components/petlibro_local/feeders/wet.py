@@ -13,7 +13,7 @@ Protocol observed directly from vendor cloud traffic, not inferred:
 Two behaviours differ fundamentally from an auger feeder:
 
 * There is no quantity. The plate rotates and the door stays open for
-  `feedingDuration` seconds.
+  `feedingDuration` minutes.
 * Feeding requires an existing `planId` - the device takes the plate from that
   plan, so it cannot feed ad-hoc.
 
@@ -167,12 +167,11 @@ def next_execution_day(
     the same. This computes the next date matching the requested weekdays whose
     time has not already passed.
 
-    `execution_time` and `now` are both *local* wall-clock, matching the stored
-    plan: the device interprets executionTime in its own timezone, which the
-    NTP reply sets to ours. Comparing a local plan time against a UTC clock
-    picks the wrong day either side of midnight.
+    `execution_time` and `now` are both UTC, matching the stored plan. Measured
+    2026-08-06: a plan reading executionTime "21:00" started its feed at
+    21:00:01Z, so the device schedules against UTC and the caller converts.
     """
-    now = now or datetime.datetime.now().astimezone()
+    now = now or datetime.datetime.now(datetime.timezone.utc)
     try:
         hh, mm = (int(x) for x in execution_time.split(":")[:2])
     except (ValueError, AttributeError):
