@@ -63,6 +63,8 @@ from ..const import (
     CAP_TEMPERATURE,
     PET_DETECT_NEAR,
     DEFAULT_WET_FEEDING_DURATION,
+    WET_FEEDING_MAX_MINUTES,
+    WET_FEEDING_MIN_MINUTES,
     ZERO_STATE_SUCCESS,
 )
 from ..protocol.codec import build_wet_feed_now, build_wet_feeding_plan
@@ -144,7 +146,18 @@ class WetFeeder:
         if zero_state is not None and zero_state != ZERO_STATE_SUCCESS:
             raise PlateNotHomed(zero_state)
 
-        duration = int(plan.get("feedingDuration") or DEFAULT_WET_FEEDING_DURATION)
+        # Clamp: the plan may predate the units fix, or have come from the
+        # vendor cloud, and feedingDuration is minutes - an unclamped 14400
+        # would ask a refrigerated feeder to stand open for ten days.
+        raw = int(plan.get("feedingDuration") or DEFAULT_WET_FEEDING_DURATION)
+        duration = max(WET_FEEDING_MIN_MINUTES, min(WET_FEEDING_MAX_MINUTES, raw))
+        if duration != raw:
+            _LOGGER.warning(
+                "Device %s: plan %s asked for %s minutes, clamped to %s "
+                "(maximum %s minutes)",
+                device.serial, plan.get("planId"), raw, duration,
+                WET_FEEDING_MAX_MINUTES,
+            )
         await device._publish(
             device.topics.service_sub,
             build_wet_feed_now(int(plan["planId"]), duration),

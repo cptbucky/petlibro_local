@@ -43,48 +43,63 @@ def _shift_plan_minutes(time_str: str, delta_minutes: int) -> str:
 
 
 async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    """Bring stored plans back to UTC, and undo the 0.2.3 shift.
+    """Bring stored plans up to the measured wire format.
 
-    Plan executionTime is UTC on the wire - measured 2026-08-06, a plan reading
-    "21:00" started its feed at 21:00:01Z. Version 2 (released as 0.2.3) acted
-    on the opposite belief and shifted every stored plan into local time, so
-    those entries are now wrong by the offset applied at the time and have to
-    be shifted back.
+    Two corrections, both from captured traffic:
 
-    Version 1 entries were already storing UTC and need no time change.
+    * `executionTime` is UTC. Version 2 (0.2.3) believed it was local wall
+      clock and shifted every stored plan, so those entries need shifting back.
+      Version 1 entries were already storing UTC.
+    * `feedingDuration` is **minutes**. Every version before 4 stored
+      `minutes * 60`, so a four-minute plan holds 240 and the device - which
+      reads minutes - would hold the door open for four hours. Version 3
+      (0.2.4) corrected the code but not the plans already on disk, which is
+      why this runs again at 4.
     """
-    if entry.version >= 3:
+    if entry.version >= 4:
         return True
 
-    plans = entry.options.get(CONF_FEEDING_PLANS, [])
+    plans = [dict(p) for p in entry.options.get(CONF_FEEDING_PLANS, [])]
 
-    if entry.version == 2 and plans:
-        # Undo the local shift v2 applied. It used the offset in force at
-        # migration time and so do we; a plan is a recurring wall-clock
-        # instruction, and any entry migrated and then re-migrated inside the
-        # same DST season round-trips exactly.
+    if plans and entry.version == 2:
+        # Undo the local shift 0.2.3 applied, using the offset in force now.
         offset = dt_util.now().utcoffset()
         offset_minutes = int(offset.total_seconds() // 60) if offset else 0
-        plans = [
-            {**p, "executionTime": _shift_plan_minutes(p["executionTime"], -offset_minutes)}
-            if p.get("executionTime") else dict(p)
-            for p in plans
-        ]
-        hass.config_entries.async_update_entry(
-            entry,
-            options={**entry.options, CONF_FEEDING_PLANS: plans},
-            version=3,
-        )
+        for plan in plans:
+            if plan.get("executionTime"):
+                plan["executionTime"] = _shift_plan_minutes(
+                    plan["executionTime"], -offset_minutes
+                )
         _LOGGER.warning(
-            "Reverted %d feeding plan(s) shifted by 0.2.3 (%+d minutes). "
-            "Plan times are UTC on the wire; 0.2.3 stored them as local. "
-            "Please check your schedule after restarting.",
+            "Reverted %d feeding plan time(s) shifted by 0.2.3 (%+d minutes)",
             len(plans),
             -offset_minutes,
         )
-    else:
-        hass.config_entries.async_update_entry(entry, version=3)
 
+    converted = 0
+    for plan in plans:
+        raw = plan.get("feedingDuration")
+        if not isinstance(raw, int) or raw <= 0:
+            continue
+        minutes = max(
+            WET_FEEDING_MIN_MINUTES, min(WET_FEEDING_MAX_MINUTES, round(raw / 60))
+        )
+        if minutes != raw:
+            plan["feedingDuration"] = minutes
+            converted += 1
+    if converted:
+        _LOGGER.warning(
+            "Converted %d feeding duration(s) from seconds to minutes. The wire "
+            "carries minutes, so these would have held the door open 60x too "
+            "long. Please check your schedule after restarting.",
+            converted,
+        )
+
+    hass.config_entries.async_update_entry(
+        entry,
+        options={**entry.options, CONF_FEEDING_PLANS: plans} if plans else entry.options,
+        version=4,
+    )
     return True
 
 

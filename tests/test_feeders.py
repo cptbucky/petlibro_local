@@ -522,11 +522,31 @@ def test_minutes_convert_to_wire_seconds(minutes, seconds):
 
 
 def test_a_four_hour_plan_is_servable():
-    """The upper bound must survive the round trip to a feed command."""
+    """The upper bound must survive the round trip to a feed command. Four
+    hours is 240 on the wire, because the wire carries minutes."""
+    f = Feeder(WET)
+    f.device.feeding_plans = [
+        {"planId": 9, "plate": 1, "feedingDuration": const.WET_FEEDING_MAX_MINUTES},
+    ]
+    f.run(f.device.serve_plate(1))
+    assert f.last()[1]["feedingDuration"] == 240
+
+
+def test_a_stale_seconds_duration_is_clamped_to_four_hours():
+    """A plan written before the units fix holds minutes*60. Sent verbatim,
+    14400 would ask a refrigerated feeder to stand open for ten days."""
     f = Feeder(WET)
     f.device.feeding_plans = [{"planId": 9, "plate": 1, "feedingDuration": 240 * 60}]
     f.run(f.device.serve_plate(1))
-    assert f.last()[1]["feedingDuration"] == 14400
+    assert f.last()[1]["feedingDuration"] == const.WET_FEEDING_MAX_MINUTES
+
+
+def test_a_zero_duration_plan_falls_back_to_the_default():
+    f = Feeder(WET)
+    f.device.feeding_plans = [{"planId": 9, "plate": 1, "feedingDuration": 0}]
+    f.run(f.device.serve_plate(1))
+    assert f.last()[1]["feedingDuration"] == const.DEFAULT_WET_FEEDING_DURATION
+    assert const.DEFAULT_WET_FEEDING_DURATION <= const.WET_FEEDING_MAX_MINUTES
 
 
 # --- capability gating and heartbeat telemetry -----------------------------

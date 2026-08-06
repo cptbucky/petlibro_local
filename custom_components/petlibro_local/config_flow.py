@@ -176,7 +176,10 @@ class PetlibroLocalConfigFlow(ConfigFlow, domain=DOMAIN):
     #    wall clock; it shifted stored plans out of UTC.
     # 3: executionTime confirmed UTC from captured traffic. v2 entries are
     #    shifted back by async_migrate_entry; v1 entries were already correct.
-    VERSION = 3
+    # 4: feedingDuration is minutes, not seconds. Every earlier version stored
+    #    minutes*60, so plans on disk needed converting - 3 fixed the code but
+    #    left the stored plans holding 60x values.
+    VERSION = 4
 
     @staticmethod
     def async_get_options_flow(
