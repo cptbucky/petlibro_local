@@ -18,6 +18,8 @@ from ..const import (
     CAP_DISPENSE_PORTIONS,
     CAP_FEEDING_PLANS,
     CAP_SD_CARD,
+    CAP_FEEDING_AUDIO,
+    CAP_BUTTON_LOCK,
     CMD_DETECTION_EVENT,
     CMD_FEEDING_PLAN_SERVICE,
     CMD_GET_FEEDING_PLAN_EVENT,
@@ -43,6 +45,10 @@ class DryFeeder:
         # Camera models record to onboard storage and report sdCardState,
         # sdCardTotalCapacity and sdCardUsedCapacity. Plate feeders never do.
         CAP_SD_CARD,
+        # enableAudio, autoChangeMode and disableHardwareButton are all
+        # reported by this model and none by the plate feeder.
+        CAP_FEEDING_AUDIO,
+        CAP_BUTTON_LOCK,
     })
 
     def build_plans(self, plans: list[dict]) -> str:

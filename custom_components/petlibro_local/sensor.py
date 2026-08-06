@@ -52,6 +52,7 @@ async def async_setup_entry(
         PetlibroPowerModeSensor(coordinator),
         PetlibroPowerTypeSensor(coordinator),
         PetlibroFeedingScheduleSensor(coordinator),
+        PetlibroRestartReasonSensor(coordinator),
     ]
 
     # Onboard storage exists only on camera models. A plate feeder never sends
@@ -65,6 +66,10 @@ async def async_setup_entry(
     # Cooled models report cabinet temperature on the heartbeat.
     if device.supports(CAP_TEMPERATURE):
         entities.append(PetlibroTemperatureSensor(coordinator))
+
+    # Bowl configuration is an auger concept; a carousel has plates instead.
+    if device.supports(CAP_DISPENSE_PORTIONS):
+        entities.append(PetlibroBowlModeSensor(coordinator))
 
     # Auger-only: a wet feeder reports no grain attributes at all.
     if device.supports(CAP_DISPENSE_PORTIONS):
@@ -197,6 +202,42 @@ class PetlibroTemperatureSensor(PetlibroEntity, SensorEntity):
     @property
     def native_value(self):
         return self.coordinator.data.get("temperature")
+
+
+class PetlibroBowlModeSensor(PetlibroEntity, SensorEntity):
+    """Bowl configuration, e.g. SINGLE_BOWL."""
+
+    _attr_name = "Bowl Mode"
+    _attr_icon = "mdi:bowl"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    @property
+    def unique_id(self) -> str:
+        return f"{self._device.serial}_bowl_mode"
+
+    @property
+    def native_value(self):
+        return self.coordinator.data.get("bowl_mode")
+
+
+class PetlibroRestartReasonSensor(PetlibroEntity, SensorEntity):
+    """Why the device last restarted.
+
+    Arrives on DEVICE_START_EVENT, so it updates only when the feeder boots -
+    which makes an unexpected change here worth noticing.
+    """
+
+    _attr_name = "Restart Reason"
+    _attr_icon = "mdi:restart-alert"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    @property
+    def unique_id(self) -> str:
+        return f"{self._device.serial}_restart_reason"
+
+    @property
+    def native_value(self):
+        return self._device.device_info.get("restart_reason")
 
 
 class PetlibroMotorStateSensor(PetlibroEntity, SensorEntity):

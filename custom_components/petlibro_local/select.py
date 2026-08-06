@@ -7,6 +7,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
+from .const import CAP_DETECTION
 from .entity import PetlibroEntity
 from .coordinator import PetlibroCoordinator
 
@@ -14,8 +15,17 @@ from .coordinator import PetlibroCoordinator
 async def async_setup_entry(
     hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback
 ) -> None:
-    """Set up Petlibro select entities."""
+    """Set up Petlibro select entities.
+
+    Every select here configures camera hardware - night vision, resolution,
+    recording mode and the detection tuning that depends on the lens. A plate
+    feeder has none of it and reports none of the backing attributes, so these
+    were six permanently unavailable entities on that model.
+    """
     coordinator: PetlibroCoordinator = entry.runtime_data
+    if not coordinator.device.supports(CAP_DETECTION):
+        return
+
     async_add_entities([
         PetlibroNightVisionSelect(coordinator),
         PetlibroResolutionSelect(coordinator),

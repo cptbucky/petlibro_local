@@ -717,3 +717,73 @@ def test_the_next_day_is_computed_in_utc_like_the_stored_time():
     day either side of midnight."""
     utc_now = datetime.datetime(2026, 8, 3, 23, 45, tzinfo=datetime.timezone.utc)
     assert next_execution_day("00:30", [1, 2, 3, 4, 5, 6, 7], utc_now) == "2026-08-04"
+
+
+# --- capability gating covers every platform -------------------------------
+#
+# Measured 2026-08-06: 15 entities existed on the wet feeder whose backing
+# attribute the device never sends - 8 switches, 6 selects and a detection
+# event. They showed as unavailable and toggling them wrote an attribute the
+# firmware ignores.
+
+
+def test_wet_feeder_declares_no_camera_or_auger_only_capabilities():
+    """The gates the platforms use. If any of these flip, dead entities come
+    back on the plate feeder."""
+    caps = Feeder(WET).device.profile.CAPABILITIES
+    for cap in (
+        const.CAP_DETECTION,       # camera, recording, motion/sound detection
+        const.CAP_FEEDING_AUDIO,   # enableAudio; the wet feeder rings instead
+        const.CAP_BUTTON_LOCK,     # autoChangeMode, disableHardwareButton
+        const.CAP_SD_CARD,
+        const.CAP_DISPENSE_PORTIONS,
+    ):
+        assert cap not in caps, cap
+
+
+def test_dry_feeder_declares_them_all():
+    caps = Feeder(DRY).device.profile.CAPABILITIES
+    for cap in (
+        const.CAP_DETECTION,
+        const.CAP_FEEDING_AUDIO,
+        const.CAP_BUTTON_LOCK,
+        const.CAP_SD_CARD,
+        const.CAP_DISPENSE_PORTIONS,
+    ):
+        assert cap in caps, cap
+
+
+def test_expected_portions_reads_the_key_the_wire_actually_sends():
+    """The wire sends expectGrainNum, without the "ed". The field map had only
+    expectedGrainNum, so Expected Feed Portions never populated."""
+    f = Feeder(DRY)
+    f.receive(
+        cmd="GRAIN_OUTPUT_EVENT", finished=True, planId=5717753, retried=0,
+        type=1, actualGrainNum=2, expectGrainNum=2, execStep="GRAIN_END",
+    )
+    assert f.device.state["expected_grain_num"] == 2
+    assert f.device.state["actual_grain_num"] == 2
+
+
+def test_the_longer_spelling_still_maps():
+    """Kept as an alias: the misspelling sat in the map long enough that some
+    firmware may yet use it."""
+    f = Feeder(DRY)
+    f.receive(cmd="GRAIN_OUTPUT_EVENT", finished=True, expectedGrainNum=3)
+    assert f.device.state["expected_grain_num"] == 3
+
+
+def test_newly_mapped_diagnostics_reach_state():
+    f = Feeder(DRY)
+    f.receive(cmd="ATTR_PUSH_EVENT", bowlMode="SINGLE_BOWL", disableHardwareButton=True)
+    assert f.device.state["bowl_mode"] == "SINGLE_BOWL"
+    assert f.device.state["disable_hardware_button"] is True
+
+
+def test_restart_reason_is_captured_from_the_start_event():
+    f = Feeder(DRY)
+    f.receive(
+        cmd="DEVICE_START_EVENT", success=True, pid="PLAF203",
+        softwareVersion="1.2.3", restartReason="other",
+    )
+    assert f.device.device_info["restart_reason"] == "other"

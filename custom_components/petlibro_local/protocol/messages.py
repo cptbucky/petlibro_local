@@ -42,9 +42,12 @@ FIELD_MAP: dict[str, str] = {
     "soundStartTimeUtc": "sound_start_time_utc",
     "soundEndTimeUtc": "sound_end_time_utc",
     "soundTimes": "sound_times",
-    # Auto lock
+    # Auto lock / physical buttons
     "autoChangeMode": "auto_change_mode",
     "autoThreshold": "auto_threshold",
+    "disableHardwareButton": "disable_hardware_button",
+    # Bowl configuration, e.g. SINGLE_BOWL. Reported by auger models only.
+    "bowlMode": "bowl_mode",
     # Camera
     "cameraSwitch": "camera_switch",
     "enableCamera": "enable_camera",
@@ -112,6 +115,8 @@ DEVICE_START_FIELDS = {
     "hardwareVersion": "hardware_version",
     "softwareVersion": "software_version",
     "success": "start_success",
+    # Why the device last restarted, e.g. "other". Diagnostic only.
+    "restartReason": "restart_reason",
 }
 
 # Grain output event fields
@@ -119,6 +124,10 @@ GRAIN_OUTPUT_FIELDS = {
     "finished": "grain_finished",
     "type": "grain_output_type",
     "actualGrainNum": "actual_grain_num",
+    # The wire sends expectGrainNum, without the "ed" - measured 2026-08-06
+    # from a PLAF203 feed. This map had only the longer spelling, so the
+    # Expected Feed Portions sensor never populated. Both are accepted.
+    "expectGrainNum": "expected_grain_num",
     "expectedGrainNum": "expected_grain_num",
     "execTime": "grain_exec_time",
     "execStep": "grain_exec_step",

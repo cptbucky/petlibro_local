@@ -250,6 +250,27 @@ These are the light and sound aging windows — the `*AgingType` attributes abov
 select the mode, and these carry its schedule. Unlike `executionTime` they are
 explicitly UTC.
 
+### What this model does not report
+
+Measured 2026-08-06 by diffing every wire key against the PLAF203 in the same
+capture. None of the following ever appears, so any entity backed by one is
+permanently unavailable on this model:
+
+```
+enableAudio            (it rings instead - see DEVICE_FUNCTION_TEST_SERVICE)
+autoChangeMode  disableHardwareButton   bowlMode
+cameraSwitch    videoRecordSwitch       feedingVideoSwitch
+cloudVideoRecordSwitch  motionDetectionSwitch  soundDetectionSwitch
+nightVision     resolution              videoRecordMode
+motionDetectionRange    motionDetectionSensitivity
+soundDetectionSensitivity
+sdCardState     sdCardTotalCapacity     sdCardUsedCapacity
+surplusGrain    motorState              grainOutletState
+```
+
+That is 8 switches, 6 selects and the SD card sensors' worth of entities if an
+integration creates them unconditionally. `DETECTION_EVENT` never fires either.
+
 No grain attributes appear — no `surplusGrain`, `motorState` or
 `grainOutletState` — and no storage attributes either: `sdCardState`,
 `sdCardTotalCapacity` and `sdCardUsedCapacity` are sent by the PLAF203 in the

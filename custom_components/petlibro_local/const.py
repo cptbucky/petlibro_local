@@ -136,6 +136,13 @@ CAP_FEEDING_PLANS = "feeding_plans"
 CAP_DETECTION = "detection"                  # camera models
 CAP_PET_PRESENCE = "pet_presence"            # infrared pet proximity sensor
 CAP_SD_CARD = "sd_card"                      # onboard storage; camera models
+# Call-to-eat audio played with a dispense (enableAudio). Distinct from
+# CAP_AUDIO_TEST, which is the wet feeder's ringer - that model has no
+# enableAudio attribute at all.
+CAP_FEEDING_AUDIO = "feeding_audio"
+# Physical control lock: autoChangeMode and disableHardwareButton. Only auger
+# models report either.
+CAP_BUTTON_LOCK = "button_lock"
 CAP_TEMPERATURE = "temperature"              # cooled models report it on the
                                              # heartbeat
 

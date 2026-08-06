@@ -7,6 +7,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
+from .const import CAP_DETECTION
 from .entity import PetlibroEntity
 from .coordinator import PetlibroCoordinator
 
@@ -24,11 +25,14 @@ async def async_setup_entry(
 ) -> None:
     """Set up Petlibro event entities."""
     coordinator: PetlibroCoordinator = entry.runtime_data
-    async_add_entities([
+    entities: list[EventEntity] = [
         PetlibroFeedingEvent(coordinator),
         PetlibroErrorEvent(coordinator),
-        PetlibroDetectionEvent(coordinator),
-    ])
+    ]
+    # DETECTION_EVENT comes from the camera; a plate feeder never fires one.
+    if coordinator.device.supports(CAP_DETECTION):
+        entities.append(PetlibroDetectionEvent(coordinator))
+    async_add_entities(entities)
 
 
 class PetlibroFeedingEvent(PetlibroEntity, EventEntity):

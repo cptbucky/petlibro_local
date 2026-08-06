@@ -10,6 +10,7 @@ from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
+from .const import CAP_BUTTON_LOCK, CAP_DETECTION, CAP_FEEDING_AUDIO
 from .entity import PetlibroEntity
 from .coordinator import PetlibroCoordinator
 
@@ -17,20 +18,51 @@ from .coordinator import PetlibroCoordinator
 async def async_setup_entry(
     hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback
 ) -> None:
-    """Set up Petlibro switches."""
+    """Set up Petlibro switches.
+
+    Gated on capability rather than model. Every switch here was previously
+    created for every feeder, so a plate feeder - which has no camera, no
+    recording and no call-to-eat audio - carried eight switches that could
+    never do anything: the attributes backing them are absent from everything
+    the device reports, so they showed as unavailable and toggling them sent an
+    attribute the firmware ignores.
+    """
     coordinator: PetlibroCoordinator = entry.runtime_data
-    async_add_entities([
+    device = coordinator.device
+
+    # Reported by every model seen so far.
+    entities: list[SwitchEntity] = [
         PetlibroAttrSwitch(coordinator, "Light", "light_switch", "lightSwitch", "mdi:led-on"),
         PetlibroAttrSwitch(coordinator, "Sound", "sound_switch", "soundSwitch", "mdi:volume-high"),
-        PetlibroAttrSwitch(coordinator, "Audio", "enable_audio", "enableAudio", "mdi:microphone"),
-        PetlibroAttrSwitch(coordinator, "Camera", "camera_switch", "cameraSwitch", "mdi:camera"),
-        PetlibroAttrSwitch(coordinator, "Video Recording", "video_record_switch", "videoRecordSwitch", "mdi:record-rec"),
-        PetlibroAttrSwitch(coordinator, "Feeding Video", "feeding_video_switch", "feedingVideoSwitch", "mdi:filmstrip"),
-        PetlibroAttrSwitch(coordinator, "Cloud Recording", "cloud_video_record_switch", "cloudVideoRecordSwitch", "mdi:cloud-upload"),
-        PetlibroAttrSwitch(coordinator, "Motion Detection", "motion_detection_switch", "motionDetectionSwitch", "mdi:motion-sensor"),
-        PetlibroAttrSwitch(coordinator, "Sound Detection", "sound_detection_switch", "soundDetectionSwitch", "mdi:ear-hearing"),
-        PetlibroAttrSwitch(coordinator, "Auto Button Lock", "auto_change_mode", "autoChangeMode", "mdi:lock"),
-    ])
+    ]
+
+    # Call-to-eat audio played with a dispense. The plate feeder uses its
+    # ringer instead and has no enableAudio attribute.
+    if device.supports(CAP_FEEDING_AUDIO):
+        entities.append(
+            PetlibroAttrSwitch(coordinator, "Audio", "enable_audio", "enableAudio", "mdi:microphone")
+        )
+
+    # Camera hardware: recording, streaming and the detection features that
+    # depend on it.
+    if device.supports(CAP_DETECTION):
+        entities += [
+            PetlibroAttrSwitch(coordinator, "Camera", "camera_switch", "cameraSwitch", "mdi:camera"),
+            PetlibroAttrSwitch(coordinator, "Video Recording", "video_record_switch", "videoRecordSwitch", "mdi:record-rec"),
+            PetlibroAttrSwitch(coordinator, "Feeding Video", "feeding_video_switch", "feedingVideoSwitch", "mdi:filmstrip"),
+            PetlibroAttrSwitch(coordinator, "Cloud Recording", "cloud_video_record_switch", "cloudVideoRecordSwitch", "mdi:cloud-upload"),
+            PetlibroAttrSwitch(coordinator, "Motion Detection", "motion_detection_switch", "motionDetectionSwitch", "mdi:motion-sensor"),
+            PetlibroAttrSwitch(coordinator, "Sound Detection", "sound_detection_switch", "soundDetectionSwitch", "mdi:ear-hearing"),
+        ]
+
+    # Physical controls on the unit itself.
+    if device.supports(CAP_BUTTON_LOCK):
+        entities += [
+            PetlibroAttrSwitch(coordinator, "Auto Button Lock", "auto_change_mode", "autoChangeMode", "mdi:lock"),
+            PetlibroAttrSwitch(coordinator, "Button Lock", "disable_hardware_button", "disableHardwareButton", "mdi:lock-outline"),
+        ]
+
+    async_add_entities(entities)
 
 
 class PetlibroAttrSwitch(PetlibroEntity, SwitchEntity):
